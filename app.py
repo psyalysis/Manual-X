@@ -18,53 +18,44 @@ class SkateboardApp:
         pygame.init()
         pygame.mixer.init()
         
-        # Get display info for multi-monitor support
-        pygame.display.init()
-        display_info = pygame.display.Info()
-        
-        # Try to use second monitor with proper resolution detection
-        try:
-            # First, try to get the second monitor's resolution by creating a temporary display
-            temp_display = pygame.display.set_mode((0, 0), pygame.FULLSCREEN, display=1)
-            temp_width = temp_display.get_width()
-            temp_height = temp_display.get_height()
-            pygame.display.quit()
-            pygame.init()
-            
-            # Now create the actual display with the detected resolution
-            self.display = pygame.display.set_mode((temp_width, temp_height), pygame.NOFRAME, display=1)
-            print(f"Using second monitor (display=1) with detected resolution: {temp_width}x{temp_height}")
-            self.fullscreen = False
-        except:
-            try:
-                # Fallback to fullscreen on second monitor
-                self.display = pygame.display.set_mode((0, 0), pygame.FULLSCREEN, display=1)
-                print("Using second monitor (display=1) with full resolution")
-                self.fullscreen = True
-            except:
-                try:
-                    # Fallback to primary monitor with full resolution
-                    self.display = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
-                    print("Using primary monitor with full resolution")
-                    self.fullscreen = True
-                except:
-                    # Final fallback with high resolution
-                    self.display = pygame.display.set_mode((1920, 1080), pygame.FULLSCREEN)
-                    print("Using fallback resolution (1920x1080)")
-                    self.fullscreen = True
-        
-        # Get actual screen dimensions
-        self.display_width = self.display.get_width()
-        self.display_height = self.display.get_height()
+        # Create a simple 1000x800 window
+        self.display = pygame.display.set_mode((1000, 800))
+        self.display_width = 1000
+        self.display_height = 800
         print(f"Display resolution: {self.display_width}x{self.display_height}")
         
         pygame.display.set_caption("Random Skateboard Display")
         
-        # Colors
+        # Unified Color Scheme
         self.colors = {
-            'background': (0, 0, 0, 0),  # Transparent background
-            'text': (255, 255, 255),
-            'border': (100, 100, 100)
+            # Primary colors
+            'primary': (52, 73, 94),      # Dark blue-gray
+            'secondary': (149, 165, 166), # Light gray
+            'accent': (46, 204, 113),     # Green
+            'warning': (241, 196, 15),    # Yellow
+            'danger': (231, 76, 60),      # Red
+            
+            # Background colors
+            'background': (44, 62, 80),   # Dark blue-gray background
+            'surface': (52, 73, 94),      # Surface color
+            'text': (236, 240, 241),      # Light text
+            'text_secondary': (149, 165, 166), # Secondary text
+            
+            # UI elements
+            'border': (127, 140, 141),    # Border color
+            'progress_bg': (44, 62, 80),  # Progress bar background
+            'progress_fill': (46, 204, 113), # Progress bar fill
+            
+            # Hand indicators
+            'hand_left': (231, 76, 60),   # Red for left hand
+            'hand_left_border': (192, 57, 43), # Darker red border
+            'hand_right': (52, 152, 219), # Blue for right hand
+            'hand_right_border': (41, 128, 185), # Darker blue border
+            
+            # Floor colors
+            'concrete_base': (149, 165, 166), # Concrete base color
+            'concrete_dark': (127, 140, 141), # Concrete dark variation
+            'concrete_crack': (108, 122, 137), # Concrete crack color
         }
         
         # Fonts - scale based on screen size
@@ -79,8 +70,17 @@ class SkateboardApp:
         self.grid_size = 118
         self.sprite_size = 64
         
+        # Animation system
+        self.animation_maps = {}
+        self.animation_metadata = {}
+        self.current_animation = None
+        self.animation_frame = 0
+        self.animation_timer = 0
+        self.animation_speed = 0.025
+        
         self._load_sprite_map()
         self._load_metadata()
+        self._load_animations()
         
         # Trick Map
         self.trick_map = {
@@ -103,15 +103,33 @@ class SkateboardApp:
         self.airborne = False
         self.landing_angle = (0, 90, 0)
         self.last_spin_time = 0
-        self.spin_interval = 0.05  # Spin every 0.1 seconds
-        self.spin_speed = 1
+        self.spin_interval = 0.025  # Spin every 0.1 seconds
+        self.spin_speed = 2
 
         # Single angle setting
         self.default_angle = (0, 90, 0)
         self.angle = self.default_angle  # (x_angle, y_angle, z_angle)
         
-        # Scale factor for fullscreen display - make it much bigger
-        self.scale_factor = max(self.display_width, self.display_height) / 75  # Much larger scale
+        # Scale factor for display - make it smaller for elevated camera view
+        self.scale_factor = max(self.display_width, self.display_height) / 120  # Smaller scale for elevated view
+        
+        # Movement system - unified speed control
+        self.move_speed = 30  # Pixels per update for all moving objects
+        self.move_update_interval = 0.1  # Update every 0.1 seconds
+        
+        # Floor properties - zoomed out for elevated camera view
+        self.floor_height = 200  # Increased height for more visible floor
+        self.floor_offset = 0  # Current scroll offset
+        self.floor_texture_width = 300  # Wider texture segments for zoomed out view
+        self.last_floor_update = 0  # Last time floor was updated
+        
+        # Rail system
+        self.rails = []  # List of active rails
+        self.rail_spawn_interval = (3, 6)  # Random spawn interval in seconds
+        self.last_rail_spawn = 0  # Last time a rail was spawned
+        self.rail_image = None  # Rail image
+        self.rail_scale = 0.5  # Scale factor to make rail smaller
+        self._load_rail_image()
         
         # Keyboard control setup
         self.hands = ["center", "center"]  # [left_hand_region, right_hand_region]
@@ -134,6 +152,9 @@ class SkateboardApp:
         # Load sound effects
         self.sounds = {}
         self._load_sounds()
+        
+        # Initialize floor texture to prevent flickering
+        self.floor_texture = self._create_floor_texture()
         
         
     def _load_sprite_map(self):
@@ -177,6 +198,44 @@ class SkateboardApp:
         except Exception as e:
             raise Exception(f"Failed to load metadata: {e}")
     
+    def _load_animations(self):
+        """Load animation sprite maps and metadata"""
+        try:
+            # Load animation index
+            with open("animations/index.txt", 'r') as f:
+                lines = f.readlines()
+                for line in lines:
+                    if " -> " in line and not line.startswith("Available"):
+                        parts = line.split(" -> ")
+                        if len(parts) == 2:
+                            trick_name = parts[0].strip()
+                            filename = parts[1].strip()
+                            
+                            # Load animation sprite map
+                            animation_path = f"animations/{filename}"
+                            if os.path.exists(animation_path):
+                                self.animation_maps[trick_name] = pygame.image.load(animation_path).convert_alpha()
+                                
+                                # Load animation metadata
+                                metadata_path = f"animations/{filename.replace('.png', '_metadata.txt')}"
+                                if os.path.exists(metadata_path):
+                                    with open(metadata_path, 'r') as mf:
+                                        metadata = {}
+                                        for mline in mf:
+                                            if "Frames:" in mline:
+                                                metadata['frames'] = int(mline.split(":")[1].strip())
+                                            elif "Frames per row:" in mline:
+                                                metadata['frames_per_row'] = int(mline.split(":")[1].strip())
+                                        
+                                        self.animation_metadata[trick_name] = metadata
+            
+            print(f"Loaded {len(self.animation_maps)} animation sprite maps")
+            
+        except Exception as e:
+            print(f"Warning: Could not load animations: {e}")
+            self.animation_maps = {}
+            self.animation_metadata = {}
+    
     def _load_sounds(self):
         """Load sound effects"""
         try:
@@ -198,6 +257,86 @@ class SkateboardApp:
                 'foot2': None,
                 'WheelsRolling.wav': None
             }
+    
+    def _load_rail_image(self):
+        """Load and scale the rail image"""
+        try:
+            original_image = pygame.image.load("objects/Rail.png").convert_alpha()
+            # Scale down the rail image
+            original_width = original_image.get_width()
+            original_height = original_image.get_height()
+            new_width = int(original_width * self.rail_scale)
+            new_height = int(original_height * self.rail_scale)
+            self.rail_image = pygame.transform.scale(original_image, (new_width, new_height))
+            print(f"Loaded and scaled rail image: {original_width}x{original_height} -> {new_width}x{new_height}")
+        except pygame.error as e:
+            print(f"Warning: Could not load rail image: {e}")
+            self.rail_image = None
+    
+    def _create_floor_texture(self):
+        """Create a concrete floor texture pattern"""
+        # Create a surface for the floor texture
+        floor_surface = pygame.Surface((self.floor_texture_width, self.floor_height))
+        
+        # Base concrete color from unified scheme
+        floor_surface.fill(self.colors['concrete_base'])
+        
+        # Add concrete texture details with seamless tiling - larger patterns for zoomed out view
+        for i in range(0, self.floor_texture_width, 30):
+            for j in range(0, self.floor_height, 25):
+                # Random variation in color for texture using unified colors
+                variation = random.randint(-20, 20)
+                base_color = self.colors['concrete_base']
+                color = (
+                    max(0, min(255, base_color[0] + variation)),
+                    max(0, min(255, base_color[1] + variation)),
+                    max(0, min(255, base_color[2] + variation))
+                )
+                # Draw without borders to avoid seams - ensure no gaps
+                pygame.draw.rect(floor_surface, color, (i, j, 30, 25), 0)
+        
+        # Add some subtle cracks and lines using unified colors
+        for i in range(15, self.floor_texture_width - 15, 75):
+            pygame.draw.line(floor_surface, self.colors['concrete_crack'], (i, 0), (i, self.floor_height), 1)
+        
+        # Ensure the texture is seamless by making sure the edges match
+        # Copy edge pixels to create seamless tiling
+        for j in range(self.floor_height):
+            # Copy right edge to left edge
+            floor_surface.set_at((0, j), floor_surface.get_at((self.floor_texture_width - 1, j)))
+            # Copy left edge to right edge  
+            floor_surface.set_at((self.floor_texture_width - 1, j), floor_surface.get_at((0, j)))
+        
+        return floor_surface
+    
+    def _render_floor(self):
+        """Render the scrolling concrete floor"""
+        # Always render floor - don't skip when airborne
+        
+        # Update floor scroll offset every 0.1 seconds for stylized effect
+        current_time = pygame.time.get_ticks() / 1000.0
+        if current_time - self.last_floor_update >= self.move_update_interval:
+            self.floor_offset = (self.floor_offset + self.move_speed) % self.floor_texture_width
+            self.last_floor_update = current_time
+        
+        # Ensure floor texture exists
+        if not hasattr(self, 'floor_texture') or self.floor_texture is None:
+            self.floor_texture = self._create_floor_texture()
+        
+        # Calculate floor position - start higher for elevated camera view
+        floor_y = self.display_height - self.floor_height + 50  # Start higher up
+        
+        # Draw multiple floor segments to cover the entire width with seamless tiling
+        # Start from -texture_width to ensure seamless scrolling
+        start_x = -self.floor_texture_width - (self.floor_offset % self.floor_texture_width)
+        for x in range(start_x, self.display_width + self.floor_texture_width, self.floor_texture_width):
+            # Draw the floor texture
+            self.display.blit(self.floor_texture, (x, floor_y))
+            
+            # Extend the floor upward to cover the entire screen height
+            # Create a vertical extension of the floor pattern for elevated view
+            for y in range(floor_y - self.floor_height, -self.floor_height, -self.floor_height):
+                self.display.blit(self.floor_texture, (x, y))
     
     def get_sprite_position(self, x_angle: float, y_angle: float, z_angle: float) -> Optional[Tuple[int, int, int, int]]:
         """Get sprite position from 3D rotation angles"""
@@ -312,11 +451,6 @@ class SkateboardApp:
                 # Check what trick the current combination matches
                 detected_trick = self._check_trick_combination()
                 if detected_trick:
-                    if detected_trick == "Ollie":
-                        self.set_angle(30, 90, 0)
-                    elif detected_trick == "Nollie":
-                        self.set_angle(-30, 90, 0)
-                        
                     self.do_trick(detected_trick, current_combination)
                 else:
                     print(f"Invalid combination held: {current_combination}")
@@ -373,6 +507,13 @@ class SkateboardApp:
         except Exception as e:
             print(f"Could not play pop sound: {e}")
         
+        # Start animation for the trick
+        if trick_name in self.animation_maps:
+            self.current_animation = trick_name
+            self.animation_frame = 0
+            self.animation_timer = 0
+            print(f"Starting animation: {trick_name}")
+        
         # Set airborne state and store trick info
         self.scale_factor *= 1.2
         self.airborne = True
@@ -381,7 +522,7 @@ class SkateboardApp:
         self.landing_angle = self.angle
     
     def _update_airborne_state(self):
-        """Update the board's airborne state and spinning"""
+        """Update the board's airborne state and animation"""
         if not self.airborne:
             return
 
@@ -390,12 +531,17 @@ class SkateboardApp:
             if not pygame.mixer.Channel(5).get_busy():
                 pygame.mixer.Channel(5).play(self.sounds['WheelsRolling.wav'], loops=-1)
 
+        # Update animation if we have one
+        if self.current_animation:
+            self._update_animation()
+
         # Check if keys are still held (not both center)
         if self.hands[0] == "center" and self.hands[1] == "center":
             # Keys released - land the board
             self.airborne = False
-            self.scale_factor = max(self.display_width, self.display_height) / 75
-            self.angle = self.landing_angle
+            self.scale_factor = max(self.display_width, self.display_height) / 120
+            self.current_animation = None
+            self.animation_frame = 0
 
             # Stop wheels rolling sound when landing
             if self.sounds['WheelsRolling.wav']:
@@ -410,86 +556,74 @@ class SkateboardApp:
             except Exception as e:
                 print(f"Could not play land sound: {e}")
             
-            print(f"Landed: {self.angle}")
-            self.landing_angle = self.angle
-
+            print(f"Landed")
             self.set_angle(0, 90, 0)
-        else:
-            # Keys still held - continue spinning
-            self._spin_board_in_air()
     
-    def _spin_board_in_air(self):
-        """Spin the board according to the current trick every 0.05 seconds"""
-        if not hasattr(self, 'current_trick_name'):
+    def _spawn_rail(self):
+        """Spawn a new rail on the right side of the screen"""
+        if self.rail_image is None:
+            return
+            
+        # Get rail image dimensions
+        rail_width = self.rail_image.get_width()
+        rail_height = self.rail_image.get_height()
+        
+        # Calculate rail position - start from right edge
+        rail_x = self.display_width
+        rail_y = self.display_height - self.floor_height + 50 - rail_height  # Position on floor
+        
+        # Add rail to the list
+        self.rails.append({
+            'x': rail_x,
+            'y': rail_y,
+            'width': rail_width,
+            'height': rail_height
+        })
+    
+    def _update_rails(self):
+        """Update rail positions and remove off-screen rails"""
+        # Only update rails when floor is updated to match concrete speed
+        current_time = pygame.time.get_ticks() / 1000.0
+        if current_time - self.last_floor_update >= self.move_update_interval:
+            # Move all rails to the left
+            for rail in self.rails[:]:  # Use slice to avoid modification during iteration
+                rail['x'] -= self.move_speed
+                
+                # Remove rails that are off-screen
+                if rail['x'] + rail['width'] < 0:
+                    self.rails.remove(rail)
+    
+    def _render_rails(self):
+        """Render all active rails"""
+        if self.rail_image is None:
+            return
+            
+        for rail in self.rails:
+            self.display.blit(self.rail_image, (rail['x'], rail['y']))
+    
+    def _update_animation(self):
+        """Update the current animation frame"""
+        if not self.current_animation or self.current_animation not in self.animation_metadata:
             return
         
         current_time = pygame.time.get_ticks() / 1000.0
         
-        # Check if enough time has passed since last spin
-        if current_time - self.last_spin_time < self.spin_interval:
-            return
-        
-        trick_name = self.current_trick_name
-        
-        # Define spin rates for different tricks (degrees per 0.1 seconds)
-        # At (0, 90, 0): tail left, nose right, griptape facing camera
-        # Y axis = kickflipping (vertical flips), Z axis = shuv-its (horizontal spins)
-        spin_rates = {
-            "Ollie": (5, 0, 0),  # No spin
-            "Nollie": (-5, 0, 0),  # No spin
-            "BS-Shuv-It": (-15, 15, 0),  # Backside shuv - X rotation (horizontal spin)
-            "FS-Shuv-It": (15, 15, 0),  # Frontside shuv - X rotation (opposite direction)
-            "Nollie BS-Shuv-It": (15, 0, 0),  # Nollie backside shuv
-            "Nollie FS-Shuv-It": (-15, 0, 0),  # Nollie frontside shuv
-            "Kickflip": (0, 30, 0),  # Kickflip - Y rotation (vertical flip)
-            "Heelflip": (0, -30, 0),  # Heelflip - Y rotation (opposite direction)
-            "Nollie Kickflip": (0, 30, 0),  # Nollie kickflip
-            "Nollie Heelflip": (0, 30, 0),  # Nollie heelflip
-            "Varial Kickflip": (0, 15, 15),  # Varial kickflip - both Y and Z
-            "Varial Heelflip": (0, -15, -15),  # Varial heelflip - both Y and Z
-            "Inward Heelflip": (0, -15, 15),  # Inward heelflip
-            "Hardflip": (0, 15, -15)  # Hardflip
-        }
-        
-        if trick_name in spin_rates:
+        # Check if enough time has passed to advance frame
+        if current_time - self.animation_timer >= self.animation_speed:
+            metadata = self.animation_metadata[self.current_animation]
+            total_frames = metadata['frames']
             
-            x_spin, y_spin, z_spin = spin_rates[trick_name]
-            # Apply rotation to current angle
-            new_x = (self.angle[0] + (x_spin * self.spin_speed)) % 360
-            new_y = (self.angle[1] + (y_spin * self.spin_speed)) % 360
-            new_z = (self.angle[2] + (z_spin * self.spin_speed)) % 360
-            if trick_name == "Ollie":
-                self.set_angle(self.angle[0] + 5, 90, 0)
-            elif trick_name == "Nollie":
-                self.set_angle(self.angle[0] - 5, 90, 0)
-            else:
-                self.set_angle(new_x, new_y, new_z)
-            
-            # Update last spin time
-            self.last_spin_time = current_time
+            # Advance to next frame
+            self.animation_frame = (self.animation_frame + 1) % total_frames
+            self.animation_timer = current_time
     
     def render_board(self, x_angle: float, y_angle: float, z_angle: float, 
                     center_x: int = None, center_y: int = None, 
                     scale: float = None) -> bool:
-        """Render the board sprite at the specified angles"""
+        """Render the board sprite at the specified angles or animation"""
         # Use default scale if not provided
         if scale is None:
             scale = self.scale_factor
-            
-        # Get sprite position from sprite map
-        sprite_pos = self.get_sprite_position(x_angle, y_angle, z_angle)
-        
-        if sprite_pos is None:
-            print(f"No sprite found for angles: x={x_angle}, y={y_angle}, z={z_angle}")
-            return False
-        
-        # Clear display - try to make it transparent for projector
-        if not self.fullscreen:
-            # For windowed mode, try to make background transparent
-            self.display.fill((0, 0, 0, 0))  # Transparent background
-        else:
-            # For fullscreen, we can't have true transparency
-            self.display.fill((0, 0, 0))  # Black background
         
         # Set default center position
         if center_x is None:
@@ -497,7 +631,78 @@ class SkateboardApp:
         if center_y is None:
             center_y = self.display_height // 2
         
-        # Extract sprite from sprite map
+        # Render animation if we have one, otherwise use angle-based rendering
+        if self.current_animation and self.current_animation in self.animation_maps:
+            # Clear display for animations to prevent frame overlap
+            self.display.fill(self.colors['background'])  # Use unified background color
+            # Render the scrolling floor first (as the background)
+            self._render_floor()
+            # Render rails
+            self._render_rails()
+            # Render the animation
+            self._render_animation(center_x, center_y, scale)
+        else:
+            # For static rendering, render floor and sprite normally
+            # Render the scrolling floor first (as the background)
+            self._render_floor()
+            # Render rails
+            self._render_rails()
+            # Fallback to angle-based rendering
+            sprite_pos = self.get_sprite_position(x_angle, y_angle, z_angle)
+            if sprite_pos:
+                self._render_sprite_from_position(sprite_pos, center_x, center_y, scale)
+            else:
+                print(f"No sprite found for angles: x={x_angle}, y={y_angle}, z={z_angle}")
+                return False
+        
+        # Draw hand position indicators at preset locations
+        self._draw_hand_position_indicators()
+        
+        # Draw angle information
+        self._draw_angle_info(x_angle, y_angle, z_angle)
+        
+        # Draw trick detection feedback
+        self._draw_trick_feedback()
+        
+        # Update display
+        pygame.display.flip()
+        
+        return True
+    
+    def _render_animation(self, center_x: int, center_y: int, scale: float):
+        """Render the current animation frame"""
+        if not self.current_animation or self.current_animation not in self.animation_maps:
+            return
+        
+        animation_map = self.animation_maps[self.current_animation]
+        metadata = self.animation_metadata[self.current_animation]
+        
+        frames_per_row = metadata['frames_per_row']
+        
+        # Calculate which frame to render
+        frame_x = (self.animation_frame % frames_per_row) * self.sprite_size
+        frame_y = (self.animation_frame // frames_per_row) * self.sprite_size
+        
+        # Extract the current frame
+        frame_rect = pygame.Rect(frame_x, frame_y, self.sprite_size, self.sprite_size)
+        sprite_surface = animation_map.subsurface(frame_rect)
+        
+        # Scale the sprite
+        if scale != 1.0:
+            new_width = int(self.sprite_size * scale)
+            new_height = int(self.sprite_size * scale)
+            sprite_surface = pygame.transform.scale(sprite_surface, (new_width, new_height))
+        
+        # Calculate position to center the sprite
+        sprite_width, sprite_height = sprite_surface.get_size()
+        draw_x = center_x - sprite_width // 2
+        draw_y = center_y - sprite_height // 2
+        
+        # Draw the sprite
+        self.display.blit(sprite_surface, (draw_x, draw_y))
+    
+    def _render_sprite_from_position(self, sprite_pos, center_x: int, center_y: int, scale: float):
+        """Render a sprite from a position tuple"""
         sprite_x, sprite_y, sprite_w, sprite_h = sprite_pos
         sprite_rect = pygame.Rect(sprite_x, sprite_y, sprite_w, sprite_h)
         sprite_surface = self.sprite_map.subsurface(sprite_rect)
@@ -515,64 +720,62 @@ class SkateboardApp:
         
         # Draw the sprite
         self.display.blit(sprite_surface, (draw_x, draw_y))
-        
-        # Draw hand position indicators at preset locations
-        self._draw_hand_position_indicators()
-        
-        # Draw angle information
-        self._draw_angle_info(x_angle, y_angle, z_angle)
-        
-        # Draw trick detection feedback
-        self._draw_trick_feedback()
-        
-        # Update display
-        pygame.display.flip()
-        
-        return True
     
     def _draw_hand_position_indicators(self):
         """Draw hand position indicators"""
-        # Circle properties
-        circle_radius = 40
+        # Circle properties - smaller radius to match skateboard scale
+        circle_radius = 25
         
-        # Left hand positions (left side of screen)
+        # Scale factor for circle positioning to match skateboard scale
+        position_scale = 120 / 75  # Same ratio as skateboard scale reduction
+        
+        # Move center position 65px toward center and set all positions 50px away
+        center_offset = int(40 * position_scale) + 65  # Move 65px toward center (inward)
+        position_distance = 50  # All positions 50px away from center
+        
+        # Left hand positions (left side of screen) - moved toward center with 50px spacing
         left_hand_positions = {
-            "center": (self.display_width // 4 + 40, self.display_height // 2),
-            "up": (self.display_width // 4 + 40, self.display_height // 4),
-            "down": (self.display_width // 4 + 40, 3 * self.display_height // 4),
-            "left": (self.display_width // 8 + 40, self.display_height // 2),
-            "right": (3 * self.display_width // 8 + 40, self.display_height // 2)
+            "center": (self.display_width // 4 + center_offset, self.display_height // 2),
+            "up": (self.display_width // 4 + center_offset, self.display_height // 2 - position_distance),
+            "down": (self.display_width // 4 + center_offset, self.display_height // 2 + position_distance),
+            "left": (self.display_width // 4 + center_offset - position_distance, self.display_height // 2),
+            "right": (self.display_width // 4 + center_offset + position_distance, self.display_height // 2)
         }
         
-        # Right hand positions (right side of screen)
+        # Right hand positions (right side of screen) - moved toward center with 50px spacing
         right_hand_positions = {
-            "center": (3 * self.display_width // 4 - 40, self.display_height // 2),
-            "up": (3 * self.display_width // 4 - 40, self.display_height // 4),
-            "down": (3 * self.display_width // 4 - 40, 3 * self.display_height // 4),
-            "left": (5 * self.display_width // 8 - 40, self.display_height // 2),
-            "right": (7 * self.display_width // 8 - 40, self.display_height // 2)
+            "center": (3 * self.display_width // 4 - center_offset, self.display_height // 2),
+            "up": (3 * self.display_width // 4 - center_offset, self.display_height // 2 - position_distance),
+            "down": (3 * self.display_width // 4 - center_offset, self.display_height // 2 + position_distance),
+            "left": (3 * self.display_width // 4 - center_offset - position_distance, self.display_height // 2),
+            "right": (3 * self.display_width // 4 - center_offset + position_distance, self.display_height // 2)
         }
         
         # Draw left hand indicator (red) on left side
         if self.hands[0] in left_hand_positions:
             screen_x, screen_y = left_hand_positions[self.hands[0]]
-            pygame.draw.circle(self.display, (255, 0, 0), (screen_x, screen_y), circle_radius)
-            pygame.draw.circle(self.display, (200, 0, 0), (screen_x, screen_y), circle_radius, 5)
+            pygame.draw.circle(self.display, self.colors['hand_left'], (screen_x, screen_y), circle_radius)
+            pygame.draw.circle(self.display, self.colors['hand_left_border'], (screen_x, screen_y), circle_radius, 5)
         
-        # Draw right hand indicator (cyan) on right side
+        # Draw right hand indicator (blue) on right side
         if self.hands[1] in right_hand_positions:
             screen_x, screen_y = right_hand_positions[self.hands[1]]
-            pygame.draw.circle(self.display, (0, 255, 255), (screen_x, screen_y), circle_radius)
-            pygame.draw.circle(self.display, (0, 200, 200), (screen_x, screen_y), circle_radius, 5)
+            pygame.draw.circle(self.display, self.colors['hand_right'], (screen_x, screen_y), circle_radius)
+            pygame.draw.circle(self.display, self.colors['hand_right_border'], (screen_x, screen_y), circle_radius, 5)
     
     
     
     
     def _draw_angle_info(self, x_angle: float, y_angle: float, z_angle: float):
         """Draw angle information on the display"""
-        # Only show angle information at bottom
-        angle_text = f"X: {x_angle}° | Y: {y_angle}° | Z: {z_angle}°"
-        text_surface = self.font.render(angle_text, True, self.colors['text'])
+        # Show animation info if playing, otherwise show angles
+        if self.current_animation:
+            animation_text = f"Animation: {self.current_animation} | Frame: {self.animation_frame}"
+            text_surface = self.font.render(animation_text, True, self.colors['text'])
+        else:
+            angle_text = f"X: {x_angle}° | Y: {y_angle}° | Z: {z_angle}°"
+            text_surface = self.font.render(angle_text, True, self.colors['text'])
+        
         text_rect = text_surface.get_rect(center=(self.display_width // 2, self.display_height - 30))
         self.display.blit(text_surface, text_rect)
     
@@ -590,10 +793,10 @@ class SkateboardApp:
             # Draw combination info at top center
             if detected_trick:
                 combo_text = f"Trick: {detected_trick}"
-                text_color = (0, 255, 0)  # Green for valid trick
+                text_color = self.colors['accent']  # Green for valid trick
             else:
                 combo_text = f"Combo: {self.hands[0]} + {self.hands[1]}"
-                text_color = (255, 255, 0)  # Yellow for invalid combo
+                text_color = self.colors['warning']  # Yellow for invalid combo
             
             text_surface = self.title_font.render(combo_text, True, text_color)
             text_rect = text_surface.get_rect(center=(self.display_width // 2, 50))
@@ -606,22 +809,22 @@ class SkateboardApp:
             bar_y = 100
             
             # Background bar
-            pygame.draw.rect(self.display, (50, 50, 50), (bar_x, bar_y, bar_width, bar_height))
+            pygame.draw.rect(self.display, self.colors['progress_bg'], (bar_x, bar_y, bar_width, bar_height))
             
             # Progress bar
             progress_width = int(bar_width * progress)
-            color = (0, 255, 0) if progress >= 1.0 else (255, 255, 0)  # Green when complete, yellow when in progress
+            color = self.colors['accent'] if progress >= 1.0 else self.colors['warning']  # Green when complete, yellow when in progress
             pygame.draw.rect(self.display, color, (bar_x, bar_y, progress_width, bar_height))
             
             # Border
-            pygame.draw.rect(self.display, (200, 200, 200), (bar_x, bar_y, bar_width, bar_height), 2)
+            pygame.draw.rect(self.display, self.colors['border'], (bar_x, bar_y, bar_width, bar_height), 2)
     
     def run(self):
         """Run the main application loop"""
         clock = pygame.time.Clock()
         running = True
         
-        # Render initial angle
+        # Render initial frame with floor
         self.render_board(*self.angle)
         
         print("Skateboard Display App")
@@ -689,6 +892,15 @@ class SkateboardApp:
             
             # Update airborne state (spinning, landing)
             self._update_airborne_state()
+            
+            # Update rails
+            self._update_rails()
+            
+            # Check for rail spawning
+            current_time = pygame.time.get_ticks() / 1000.0
+            if current_time - self.last_rail_spawn >= random.uniform(*self.rail_spawn_interval):
+                self._spawn_rail()
+                self.last_rail_spawn = current_time
             
             # Render current angle
             self.render_board(*self.angle)
