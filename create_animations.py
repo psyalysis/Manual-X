@@ -67,9 +67,9 @@ class AnimationGenerator:
             ],
             "Nollie": [
                 "0.0_90.0_0.0",    # Start position
-                "-15.0_90.0_0.0",  # Pop up
-                "-30.0_90.0_0.0",  # Peak
-                "-15.0_90.0_0.0",  # Coming down
+                "345.0_90.0_0.0",  # Pop up (fakie)
+                "330.0_90.0_0.0",  # Peak (fakie)
+                "345.0_90.0_0.0",  # Coming down (fakie)
                 "0.0_90.0_0.0"     # Landing
             ],
             "BS-Shuv-It": [

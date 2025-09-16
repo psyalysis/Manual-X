@@ -1,17 +1,13 @@
-Animation Sprite Maps Index
-==============================
+Shuv-Flip Animation Sprite Maps Index
+========================================
 
 Available animations:
 --------------------
-Ollie                -> Ollie.png
-Nollie               -> Nollie.png
 BS-Shuv-It           -> BS_Shuv_It.png
 FS-Shuv-It           -> FS_Shuv_It.png
 Kickflip             -> Kickflip.png
 Heelflip             -> Heelflip.png
-Nollie Kickflip      -> Nollie_Kickflip.png
-Nollie Heelflip      -> Nollie_Heelflip.png
-Varial Kickflip      -> Varial_Kickflip.png
 Varial Heelflip      -> Varial_Heelflip.png
-Inward Heelflip      -> Inward_Heelflip.png
 Hardflip             -> Hardflip.png
+Varial Kickflip      -> Varial_Kickflip.png
+Inward Heelflip      -> Inward_Heelflip.png

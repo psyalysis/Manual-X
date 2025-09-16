@@ -1,0 +1,1102 @@
+# 2.5D Isometric Skateboard Game Conversion Blueprint
+## Using OBJ Model Instead of Sprites
+
+## Project Overview
+Convert the existing 2D Pygame skateboard game to a 2.5D isometric version using Ursina Engine while maintaining all current functionality including trick detection, grinding, animations, and sound systems. This version will use a 3D OBJ model instead of 2D sprites.
+
+## 1. Project Setup & Dependencies
+
+### 1.1 New Requirements
+```python
+# requirements.txt additions
+ursina>=5.0.0
+panda3d>=1.10.0
+numpy>=1.21.0
+pillow>=8.0.0
+```
+
+### 1.2 Project Structure
+```
+Manual-X-3D/
+├── main.py                 # Main Ursina application
+├── core/
+│   ├── __init__.py
+│   ├── game_engine.py      # Core game logic
+│   ├── skateboard.py       # 3D skateboard entity with OBJ model
+│   ├── trick_system.py     # Trick detection & execution
+│   ├── grind_system.py     # Grinding mechanics
+│   └── animation_system.py # 3D animation handling
+├── assets/
+│   ├── models/             # 3D models (skateboard.obj)
+│   ├── textures/           # Textures for OBJ model
+│   ├── sounds/             # Existing SFX folder
+│   └── materials/          # Material definitions
+├── ui/
+│   ├── __init__.py
+│   ├── hud.py              # UI elements
+│   ├── controls.py         # Control indicators
+│   └── feedback.py         # Trick/landing feedback
+├── world/
+│   ├── __init__.py
+│   ├── level_generator.py  # 3D level generation
+│   ├── rail_system.py      # 3D rail objects
+│   └── floor_system.py     # 3D floor/ground
+└── utils/
+    ├── __init__.py
+    ├── model_loader.py     # OBJ model loading utilities
+    └── angle_utils.py      # 3D angle calculations
+```
+
+## 2. Core System Conversion
+
+### 2.1 Main Application (main.py)
+```python
+from ursina import *
+from core.game_engine import SkateboardGameEngine
+
+def main():
+    app = Ursina()
+    
+    # Configure Ursina for isometric view
+    camera.position = (0, 15, -15)  # Isometric camera position
+    camera.rotation_x = 30  # 30-degree downward angle
+    camera.rotation_y = 0   # No horizontal rotation for true isometric
+    
+    # Initialize game engine
+    game = SkateboardGameEngine()
+    
+    app.run()
+
+if __name__ == "__main__":
+    main()
+```
+
+### 2.2 3D Skateboard Entity with OBJ Model (core/skateboard.py)
+```python
+from ursina import *
+import math
+
+class Skateboard3D(Entity):
+    def __init__(self):
+        super().__init__()
+        
+        # Load OBJ model
+        self.model = 'assets/models/skateboard.obj'
+        self.scale = (1, 1, 1)  # Adjust based on OBJ model size
+        self.color = color.white
+        
+        # Load texture for the skateboard
+        self.texture = 'assets/textures/skateboard_texture.png'
+        
+        # Animation state
+        self.shuv_angle = 0
+        self.flip_angle = 0
+        self.airborne = False
+        self.current_animation = None
+        self.original_rotation = (0, 0, 0)
+        
+        # Store original position for animations
+        self.original_y = 0
+        
+    def set_angles(self, shuv_angle, flip_angle):
+        """Set skateboard rotation angles using OBJ model"""
+        self.shuv_angle = shuv_angle
+        self.flip_angle = flip_angle
+        
+        # Apply rotations to the OBJ model
+        # Shuv rotation around Z-axis (spinning horizontally)
+        self.rotation_z = shuv_angle
+        
+        # Flip rotation around X-axis (flipping vertically)
+        self.rotation_x = flip_angle
+        
+        # Keep Y rotation for board orientation
+        self.rotation_y = 0
+    
+    def reset_rotation(self):
+        """Reset to original rotation"""
+        self.rotation = self.original_rotation
+    
+    def set_animation_rotation(self, x_rot, y_rot, z_rot):
+        """Set rotation for animation frames"""
+        self.rotation_x = x_rot
+        self.rotation_y = y_rot
+        self.rotation_z = z_rot
+    
+    def set_animation_position(self, y_pos):
+        """Set Y position for jump animations"""
+        self.y = self.original_y + y_pos
+```
+
+### 2.3 Trick System (core/trick_system.py)
+```python
+from ursina import *
+import time
+
+class TrickSystem:
+    def __init__(self, skateboard):
+        self.skateboard = skateboard
+        
+        # Trick mappings (same as original)
+        self.trick_map = {
+            "BS-Shuv-It": ["down", "center"], 
+            "FS-Shuv-It": ["up", "center"], 
+            "Nollie BS-Shuv-It": ["center", "down"], 
+            "Nollie FS-Shuv-It": ["center", "up"], 
+            "Kickflip": ["left", "down"], 
+            "Heelflip": ["left", "up"], 
+            "Nollie Kickflip": ["down", "right"], 
+            "Nollie Heelflip": ["up", "right"],
+            "Varial Kickflip": ["down", "down"],
+            "Varial Heelflip": ["up", "up"],
+            "Inward Heelflip": ["down", "up"],
+            "Hardflip": ["up", "down"]
+        }
+        
+        # Grind Trick Map (same as original)
+        self.grind_trick_map = {
+            "Nose Grind": ["left", "left"],
+            "5-0 Grind": ["right", "right"],
+            "Tailslide": ["up", "up"], 
+            "Noseslide": ["down", "down"],
+            "Crooked Grind": ["down", "right"],
+            "Overcrooked Grind": ["up", "right"],
+            "Smith Grind": ["left", "down"],
+            "Feeble Grind": ["left", "up"], 
+            "Frontside Boardslide": ["down", "up"], 
+            "Backside Boardslide": ["up", "down"],
+            "50-50 Grind": ["right", "left"],
+            "Salad Grind": ["right", "up"],
+            "Suski Grind": ["right", "down"]
+        }
+        
+        # Animation data for 3D
+        self.animations = {}
+        self.current_trick = None
+        self.trick_start_time = 0
+        self.trick_hold_duration = 0.2
+        
+        # Grind system variables
+        self.grind_window_duration = 0.5
+        self.grind_window_start_time = 0
+        self.in_grind_window = False
+        self.grinding = False
+        self.grind_trick = None
+        self.grind_start_time = 0
+        self.min_grind_duration = 0.3
+        
+        # Grind hold mechanic
+        self.grind_hold_duration = 0.15
+        self.grind_hold_start_time = 0
+        self.holding_grind_trick = False
+        self.pending_grind_trick = None
+        
+    def check_trick_input(self, left_hand, right_hand):
+        """Check if current input matches any trick"""
+        hands = [left_hand, right_hand]
+        
+        for trick_name, required_hands in self.trick_map.items():
+            if hands == required_hands:
+                return trick_name
+        return None
+    
+    def check_grind_input(self, left_hand, right_hand):
+        """Check if current input matches any grind trick"""
+        hands = [left_hand, right_hand]
+        
+        for grind_name, required_hands in self.grind_trick_map.items():
+            if hands == required_hands:
+                return grind_name
+        return None
+    
+    def execute_trick(self, trick_name):
+        """Execute a trick with 3D animation"""
+        self.current_trick = trick_name
+        self.trick_start_time = time.time()
+        
+        # Start 3D animation
+        if trick_name in self.animations:
+            self._play_trick_animation(trick_name)
+        
+        # Set airborne state
+        self.skateboard.airborne = True
+        
+        # Play trick sound
+        self._play_trick_sound(trick_name)
+    
+    def _play_trick_sound(self, trick_name):
+        """Play appropriate sound for trick"""
+        # Import audio system and play sound
+        pass
+```
+
+### 2.4 3D Animation System (core/animation_system.py)
+```python
+from ursina import *
+import math
+import time
+
+class AnimationSystem:
+    def __init__(self, skateboard):
+        self.skateboard = skateboard
+        self.animations = {}
+        self.current_animation = None
+        self.animation_frame = 0
+        self.animation_timer = 0
+        self.animation_speed = 0.05
+        self.animation_completed = False
+        
+        # Spin speeds for different trick types
+        self.shuv_spin_speed = 2
+        self.flip_spin_speed = 3.4
+        self.varial_spin_speed = 1.2
+        
+        self.load_animations()
+    
+    def load_animations(self):
+        """Load 3D animation data for OBJ model"""
+        # Convert 2D sprite animations to 3D rotation sequences
+        self.animations = {
+            "Kickflip": self._create_kickflip_animation(),
+            "Heelflip": self._create_heelflip_animation(),
+            "BS-Shuv-It": self._create_bs_shuv_animation(),
+            "FS-Shuv-It": self._create_fs_shuv_animation(),
+            "Varial Kickflip": self._create_varial_kickflip_animation(),
+            "Varial Heelflip": self._create_varial_heelflip_animation(),
+            "Hardflip": self._create_hardflip_animation(),
+            "Inward Heelflip": self._create_inward_heelflip_animation(),
+            "Nollie Kickflip": self._create_nollie_kickflip_animation(),
+            "Nollie Heelflip": self._create_nollie_heelflip_animation(),
+            "Nollie BS-Shuv-It": self._create_nollie_bs_shuv_animation(),
+            "Nollie FS-Shuv-It": self._create_nollie_fs_shuv_animation()
+        }
+    
+    def _create_kickflip_animation(self):
+        """Create 3D kickflip animation sequence"""
+        frames = []
+        total_frames = 24
+        
+        # 360-degree flip around X-axis over 24 frames
+        for i in range(total_frames):
+            progress = i / total_frames
+            frame = {
+                'rotation_x': progress * 360,
+                'rotation_y': 0,
+                'rotation_z': 0,
+                'position_y': math.sin(progress * math.pi) * 3  # Jump arc
+            }
+            frames.append(frame)
+        
+        return frames
+    
+    def _create_heelflip_animation(self):
+        """Create 3D heelflip animation sequence"""
+        frames = []
+        total_frames = 24
+        
+        # 360-degree flip around X-axis (opposite direction)
+        for i in range(total_frames):
+            progress = i / total_frames
+            frame = {
+                'rotation_x': -progress * 360,  # Negative for opposite direction
+                'rotation_y': 0,
+                'rotation_z': 0,
+                'position_y': math.sin(progress * math.pi) * 3
+            }
+            frames.append(frame)
+        
+        return frames
+    
+    def _create_bs_shuv_animation(self):
+        """Create backside shuv-it animation"""
+        frames = []
+        total_frames = 20
+        
+        # 180-degree shuv around Z-axis
+        for i in range(total_frames):
+            progress = i / total_frames
+            frame = {
+                'rotation_x': 0,
+                'rotation_y': 0,
+                'rotation_z': progress * 180,
+                'position_y': math.sin(progress * math.pi) * 2
+            }
+            frames.append(frame)
+        
+        return frames
+    
+    def _create_fs_shuv_animation(self):
+        """Create frontside shuv-it animation"""
+        frames = []
+        total_frames = 20
+        
+        # 180-degree shuv around Z-axis (opposite direction)
+        for i in range(total_frames):
+            progress = i / total_frames
+            frame = {
+                'rotation_x': 0,
+                'rotation_y': 0,
+                'rotation_z': -progress * 180,
+                'position_y': math.sin(progress * math.pi) * 2
+            }
+            frames.append(frame)
+        
+        return frames
+    
+    def _create_varial_kickflip_animation(self):
+        """Create varial kickflip (kickflip + shuv)"""
+        frames = []
+        total_frames = 24
+        
+        for i in range(total_frames):
+            progress = i / total_frames
+            frame = {
+                'rotation_x': progress * 360,  # Kickflip
+                'rotation_y': 0,
+                'rotation_z': progress * 180,  # Shuv
+                'position_y': math.sin(progress * math.pi) * 3
+            }
+            frames.append(frame)
+        
+        return frames
+    
+    def _create_varial_heelflip_animation(self):
+        """Create varial heelflip (heelflip + shuv)"""
+        frames = []
+        total_frames = 24
+        
+        for i in range(total_frames):
+            progress = i / total_frames
+            frame = {
+                'rotation_x': -progress * 360,  # Heelflip
+                'rotation_y': 0,
+                'rotation_z': -progress * 180,  # Shuv
+                'position_y': math.sin(progress * math.pi) * 3
+            }
+            frames.append(frame)
+        
+        return frames
+    
+    def _create_hardflip_animation(self):
+        """Create hardflip (kickflip + fs shuv)"""
+        frames = []
+        total_frames = 24
+        
+        for i in range(total_frames):
+            progress = i / total_frames
+            frame = {
+                'rotation_x': progress * 360,  # Kickflip
+                'rotation_y': 0,
+                'rotation_z': -progress * 180,  # FS Shuv
+                'position_y': math.sin(progress * math.pi) * 3
+            }
+            frames.append(frame)
+        
+        return frames
+    
+    def _create_inward_heelflip_animation(self):
+        """Create inward heelflip (heelflip + bs shuv)"""
+        frames = []
+        total_frames = 24
+        
+        for i in range(total_frames):
+            progress = i / total_frames
+            frame = {
+                'rotation_x': -progress * 360,  # Heelflip
+                'rotation_y': 0,
+                'rotation_z': progress * 180,  # BS Shuv
+                'position_y': math.sin(progress * math.pi) * 3
+            }
+            frames.append(frame)
+        
+        return frames
+    
+    def _create_nollie_kickflip_animation(self):
+        """Create nollie kickflip animation"""
+        frames = []
+        total_frames = 24
+        
+        for i in range(total_frames):
+            progress = i / total_frames
+            frame = {
+                'rotation_x': progress * 360,
+                'rotation_y': 0,
+                'rotation_z': 0,
+                'position_y': math.sin(progress * math.pi) * 3
+            }
+            frames.append(frame)
+        
+        return frames
+    
+    def _create_nollie_heelflip_animation(self):
+        """Create nollie heelflip animation"""
+        frames = []
+        total_frames = 24
+        
+        for i in range(total_frames):
+            progress = i / total_frames
+            frame = {
+                'rotation_x': -progress * 360,
+                'rotation_y': 0,
+                'rotation_z': 0,
+                'position_y': math.sin(progress * math.pi) * 3
+            }
+            frames.append(frame)
+        
+        return frames
+    
+    def _create_nollie_bs_shuv_animation(self):
+        """Create nollie backside shuv-it animation"""
+        frames = []
+        total_frames = 20
+        
+        for i in range(total_frames):
+            progress = i / total_frames
+            frame = {
+                'rotation_x': 0,
+                'rotation_y': 0,
+                'rotation_z': progress * 180,
+                'position_y': math.sin(progress * math.pi) * 2
+            }
+            frames.append(frame)
+        
+        return frames
+    
+    def _create_nollie_fs_shuv_animation(self):
+        """Create nollie frontside shuv-it animation"""
+        frames = []
+        total_frames = 20
+        
+        for i in range(total_frames):
+            progress = i / total_frames
+            frame = {
+                'rotation_x': 0,
+                'rotation_y': 0,
+                'rotation_z': -progress * 180,
+                'position_y': math.sin(progress * math.pi) * 2
+            }
+            frames.append(frame)
+        
+        return frames
+    
+    def play_animation(self, animation_name):
+        """Play a 3D animation"""
+        if animation_name in self.animations:
+            self.current_animation = animation_name
+            self.animation_frame = 0
+            self.animation_timer = time.time()
+            self.animation_completed = False
+    
+    def update_animation(self):
+        """Update current animation frame"""
+        if not self.current_animation or self.animation_completed:
+            return
+        
+        # Get appropriate spin speed for current trick
+        trick_spin_speed = self._get_trick_spin_speed(self.current_animation)
+        current_animation_speed = self.animation_speed / trick_spin_speed
+        
+        # Advance frame based on time
+        if time.time() - self.animation_timer >= current_animation_speed:
+            self.animation_frame += 1
+            self.animation_timer = time.time()
+            
+            # Apply current frame to skateboard
+            frames = self.animations[self.current_animation]
+            if self.animation_frame < len(frames):
+                frame = frames[self.animation_frame]
+                self.skateboard.set_animation_rotation(
+                    frame['rotation_x'],
+                    frame['rotation_y'],
+                    frame['rotation_z']
+                )
+                self.skateboard.set_animation_position(frame['position_y'])
+            else:
+                # Animation completed
+                self.animation_completed = True
+                self.skateboard.reset_rotation()
+    
+    def _get_trick_spin_speed(self, trick_name):
+        """Get appropriate spin speed for trick type"""
+        shuv_tricks = ["BS-Shuv-It", "FS-Shuv-It", "Nollie BS-Shuv-It", "Nollie FS-Shuv-It"]
+        flip_tricks = ["Kickflip", "Heelflip", "Nollie Kickflip", "Nollie Heelflip"]
+        varial_tricks = ["Varial Kickflip", "Varial Heelflip", "Hardflip", "Inward Heelflip"]
+        
+        if trick_name in shuv_tricks:
+            return self.shuv_spin_speed
+        elif trick_name in flip_tricks:
+            return self.flip_spin_speed
+        elif trick_name in varial_tricks:
+            return self.varial_spin_speed
+        else:
+            return 1.0
+```
+
+## 3. 3D World Systems
+
+### 3.1 Floor System (world/floor_system.py)
+```python
+from ursina import *
+import random
+import time
+
+class FloorSystem:
+    def __init__(self):
+        self.floor_segments = []
+        self.segment_width = 20
+        self.segment_length = 50
+        self.current_offset = 0
+        self.move_speed = 30
+        self.move_update_interval = 0.15
+        self.last_floor_update = 0
+        
+    def create_floor(self):
+        """Create 3D floor with texture from 2D levels"""
+        # Load random level texture
+        texture_path = f"assets/textures/levels/sprite_{random.randint(1, 12):03d}.png"
+        
+        # Create floor plane
+        floor = Entity(
+            model='plane',
+            scale=(self.segment_width, 1, self.segment_length),
+            texture=texture_path,
+            position=(0, 0, 0),
+            rotation_x=90  # Rotate to be horizontal
+        )
+        
+        self.floor_segments.append(floor)
+        
+        # Create additional segments for seamless scrolling
+        for i in range(3):
+            segment = Entity(
+                model='plane',
+                scale=(self.segment_width, 1, self.segment_length),
+                texture=texture_path,
+                position=(0, 0, -(i + 1) * self.segment_length),
+                rotation_x=90
+            )
+            self.floor_segments.append(segment)
+    
+    def update_floor(self):
+        """Update floor scrolling for endless movement"""
+        current_time = time.time()
+        
+        if current_time - self.last_floor_update >= self.move_update_interval:
+            for segment in self.floor_segments:
+                segment.z += self.move_speed * self.move_update_interval
+                
+                # Reset position when off-screen
+                if segment.z > self.segment_length:
+                    segment.z -= len(self.floor_segments) * self.segment_length
+            
+            self.last_floor_update = current_time
+```
+
+### 3.2 Rail System (world/rail_system.py)
+```python
+from ursina import *
+import random
+import time
+
+class RailSystem:
+    def __init__(self):
+        self.rails = []
+        self.rail_spawn_timer = 0
+        self.rail_spawn_interval = (3, 6)
+        self.move_speed = 30
+        self.move_update_interval = 0.15
+        self.last_rail_update = 0
+        
+    def create_rail(self, position):
+        """Create 3D rail object"""
+        rail = Entity(
+            model='cube',
+            scale=(0.2, 0.2, 10),  # Long thin rail
+            color=color.silver,
+            position=position
+        )
+        
+        self.rails.append(rail)
+        return rail
+    
+    def update_rails(self):
+        """Update rail positions and spawning"""
+        current_time = time.time()
+        
+        if current_time - self.last_rail_update >= self.move_update_interval:
+            # Move existing rails
+            for rail in self.rails[:]:  # Use slice to avoid modification during iteration
+                rail.z += self.move_speed * self.move_update_interval
+                
+                # Remove off-screen rails
+                if rail.z > 50:
+                    destroy(rail)
+                    self.rails.remove(rail)
+            
+            self.last_rail_update = current_time
+        
+        # Spawn new rails
+        if current_time - self.rail_spawn_timer >= random.uniform(*self.rail_spawn_interval):
+            self.create_rail((0, 1, -50))
+            self.rail_spawn_timer = current_time
+    
+    def check_rail_collision(self, skateboard_position):
+        """Check if skateboard is near a rail for grinding"""
+        for rail in self.rails:
+            distance_y = abs(skateboard_position.y - rail.y)
+            distance_z = abs(skateboard_position.z - rail.z)
+            
+            # Check if within collision range
+            if distance_z < 5 and distance_y < 2:
+                return True
+        return False
+```
+
+## 4. UI System Conversion
+
+### 4.1 HUD System (ui/hud.py)
+```python
+from ursina import *
+
+class HUD:
+    def __init__(self):
+        self.trick_text = Text("", position=(-0.8, 0.4), scale=2)
+        self.angle_text = Text("", position=(-0.8, 0.3), scale=1.5)
+        self.progress_bar = None
+        self.landing_feedback = None
+        self.grind_feedback = None
+        
+    def update_trick_display(self, trick_name, progress):
+        """Update trick display with 3D text"""
+        if trick_name:
+            self.trick_text.text = trick_name
+            if progress > 0.8:
+                self.trick_text.color = color.green
+            elif progress > 0.4:
+                self.trick_text.color = color.yellow
+            else:
+                self.trick_text.color = color.red
+        else:
+            self.trick_text.text = ""
+    
+    def update_angle_display(self, shuv_angle, flip_angle):
+        """Update angle display"""
+        self.angle_text.text = f"Shuv: {shuv_angle}° | Flip: {flip_angle}°"
+    
+    def show_progress_bar(self, progress):
+        """Show trick progress bar"""
+        if not self.progress_bar:
+            self.progress_bar = Entity(
+                model='cube',
+                scale=(0.4, 0.02, 0.01),
+                position=(-0.6, 0.2, 0),
+                color=color.red
+            )
+        
+        # Update progress bar width
+        self.progress_bar.scale_x = 0.4 * progress
+    
+    def show_landing_feedback(self, success):
+        """Show landing feedback"""
+        if not self.landing_feedback:
+            self.landing_feedback = Text("", position=(0, 0.1), scale=3)
+        
+        if success:
+            self.landing_feedback.text = "PERFECT LANDING!"
+            self.landing_feedback.color = color.green
+        else:
+            self.landing_feedback.text = "MISSED LANDING!"
+            self.landing_feedback.color = color.red
+    
+    def show_grind_feedback(self, grind_name, in_window=False):
+        """Show grind feedback"""
+        if not self.grind_feedback:
+            self.grind_feedback = Text("", position=(0, 0), scale=2)
+        
+        if in_window:
+            self.grind_feedback.text = "GRIND WINDOW - Input trick!"
+            self.grind_feedback.color = color.yellow
+        elif grind_name:
+            self.grind_feedback.text = f"GRINDING: {grind_name}"
+            self.grind_feedback.color = color.green
+        else:
+            self.grind_feedback.text = ""
+```
+
+### 4.2 Control Indicators (ui/controls.py)
+```python
+from ursina import *
+
+class ControlIndicators:
+    def __init__(self):
+        self.left_arrows = self._create_arrow_set("left")
+        self.right_arrows = self._create_arrow_set("right")
+        
+    def _create_arrow_set(self, side):
+        """Create 3D arrow indicators"""
+        arrows = {}
+        base_positions = {
+            'up': (0, 0.1, 0),
+            'down': (0, -0.1, 0),
+            'left': (-0.1, 0, 0),
+            'right': (0.1, 0, 0)
+        }
+        
+        # Adjust positions based on side
+        if side == "left":
+            offset = (-0.3, 0, 0)
+        else:
+            offset = (0.3, 0, 0)
+        
+        for direction, pos in base_positions.items():
+            arrow = Entity(
+                model='cube',
+                scale=0.05,
+                position=(pos[0] + offset[0], pos[1] + offset[1], pos[2] + offset[2]),
+                color=color.white
+            )
+            arrows[direction] = arrow
+        
+        return arrows
+    
+    def update_arrows(self, left_hand, right_hand, left_keys, right_keys):
+        """Update arrow colors based on input"""
+        # Update left arrows
+        for direction, arrow in self.left_arrows.items():
+            if self._is_direction_pressed(direction, left_keys):
+                arrow.color = color.green
+            else:
+                arrow.color = color.white
+        
+        # Update right arrows
+        for direction, arrow in self.right_arrows.items():
+            if self._is_direction_pressed(direction, right_keys):
+                arrow.color = color.blue
+            else:
+                arrow.color = color.white
+    
+    def _is_direction_pressed(self, direction, keys):
+        """Check if direction key is pressed"""
+        key_mapping = {
+            'up': 'w' if 'w' in keys else 'i',
+            'down': 's' if 's' in keys else 'k',
+            'left': 'a' if 'a' in keys else 'j',
+            'right': 'd' if 'd' in keys else 'l'
+        }
+        
+        return key_mapping.get(direction, '') in keys
+```
+
+## 5. Asset Management
+
+### 5.1 OBJ Model Loader (utils/model_loader.py)
+```python
+from ursina import *
+import os
+
+class ModelLoader:
+    def __init__(self):
+        self.models_dir = "assets/models"
+        self.textures_dir = "assets/textures"
+        
+    def load_skateboard_model(self):
+        """Load the skateboard OBJ model with texture"""
+        model_path = os.path.join(self.models_dir, "skateboard.obj")
+        texture_path = os.path.join(self.textures_dir, "skateboard_texture.png")
+        
+        if os.path.exists(model_path):
+            return model_path, texture_path
+        else:
+            print(f"Warning: Skateboard model not found at {model_path}")
+            return None, None
+    
+    def load_level_textures(self):
+        """Load level textures from 2D assets"""
+        level_textures = []
+        levels_dir = "assets/textures/levels"
+        
+        if os.path.exists(levels_dir):
+            for i in range(1, 13):  # 12 level textures
+                texture_path = os.path.join(levels_dir, f"sprite_{i:03d}.png")
+                if os.path.exists(texture_path):
+                    level_textures.append(texture_path)
+        
+        return level_textures
+```
+
+## 6. Sound System Integration
+
+### 6.1 3D Audio System
+```python
+from ursina import *
+
+class AudioSystem:
+    def __init__(self):
+        self.sounds = {}
+        self.load_sounds()
+        
+    def load_sounds(self):
+        """Load all sound effects from SFX folder"""
+        sound_files = [
+            'StartTrick', 'CancelTrick', 'Success', 'Fail',
+            'Pop_1', 'Pop_2', 'Pop_3', 'Pop_4', 'Pop_5', 'Pop_6',
+            'Catch_1', 'Catch_2', 'Catch_3',
+            'Land_1', 'Land_2', 'Land_3', 'Land_4', 'Land_5',
+            'Rail', 'WheelsRolling', 'Foot1', 'Foot2'
+        ]
+        
+        for sound_name in sound_files:
+            try:
+                # Try different file extensions
+                for ext in ['.wav', '.mp3']:
+                    sound_path = f"assets/sounds/{sound_name}{ext}"
+                    if os.path.exists(sound_path):
+                        self.sounds[sound_name] = Audio(sound_path)
+                        break
+            except Exception as e:
+                print(f"Could not load sound: {sound_name} - {e}")
+    
+    def play_sound(self, sound_name, volume=1.0):
+        """Play 3D positioned sound"""
+        if sound_name in self.sounds:
+            self.sounds[sound_name].play()
+    
+    def play_random_sound(self, sound_prefix, count):
+        """Play random sound from a group (e.g., Pop_1 to Pop_5)"""
+        sound_name = f"{sound_prefix}_{random.randint(1, count)}"
+        self.play_sound(sound_name)
+```
+
+## 7. Main Game Engine
+
+### 7.1 Core Game Engine (core/game_engine.py)
+```python
+from ursina import *
+from .skateboard import Skateboard3D
+from .trick_system import TrickSystem
+from .animation_system import AnimationSystem
+from world.floor_system import FloorSystem
+from world.rail_system import RailSystem
+from ui.hud import HUD
+from ui.controls import ControlIndicators
+from utils.model_loader import ModelLoader
+import time
+
+class SkateboardGameEngine:
+    def __init__(self):
+        # Initialize systems
+        self.skateboard = Skateboard3D()
+        self.trick_system = TrickSystem(self.skateboard)
+        self.animation_system = AnimationSystem(self.skateboard)
+        self.floor_system = FloorSystem()
+        self.rail_system = RailSystem()
+        self.hud = HUD()
+        self.controls = ControlIndicators()
+        self.audio = AudioSystem()
+        self.model_loader = ModelLoader()
+        
+        # Game state
+        self.hands = ["center", "center"]
+        self.keys_pressed = {
+            'w': False, 'a': False, 's': False, 'd': False,
+            'i': False, 'j': False, 'k': False, 'l': False
+        }
+        
+        # Initialize game
+        self._setup_game()
+        
+        # Start update loop
+        self._start_update_loop()
+    
+    def _setup_game(self):
+        """Setup initial game state"""
+        # Load skateboard model
+        model_path, texture_path = self.model_loader.load_skateboard_model()
+        if model_path:
+            self.skateboard.model = model_path
+            if texture_path:
+                self.skateboard.texture = texture_path
+        
+        # Create floor
+        self.floor_system.create_floor()
+        
+        # Set initial position
+        self.skateboard.position = (0, 0, 0)
+    
+    def _start_update_loop(self):
+        """Start the main update loop"""
+        def update():
+            self._update_game_state()
+        
+        # Register update function with Ursina
+        invoke(update, delay=0.016)  # ~60 FPS
+    
+    def _update_game_state(self):
+        """Main game state update"""
+        # Update hand regions based on keyboard input
+        self._update_keyboard_controls()
+        
+        # Update trick detection
+        self._update_trick_detection()
+        
+        # Update airborne state
+        self._update_airborne_state()
+        
+        # Update systems
+        self.floor_system.update_floor()
+        self.rail_system.update_rails()
+        self.animation_system.update_animation()
+        
+        # Update UI
+        self._update_ui()
+    
+    def _update_keyboard_controls(self):
+        """Update hand regions based on keyboard input"""
+        # Reset to center
+        self.hands = ["center", "center"]
+        
+        # Left hand logic (WASD)
+        left_keys = [self.keys_pressed['w'], self.keys_pressed['a'], 
+                    self.keys_pressed['s'], self.keys_pressed['d']]
+        self.hands[0] = self._get_hand_direction(left_keys)
+        
+        # Right hand logic (IJKL)
+        right_keys = [self.keys_pressed['i'], self.keys_pressed['j'], 
+                     self.keys_pressed['k'], self.keys_pressed['l']]
+        self.hands[1] = self._get_hand_direction(right_keys)
+    
+    def _get_hand_direction(self, keys):
+        """Helper method to determine hand direction from key states"""
+        # keys = [up, left, down, right]
+        if keys[0] and (keys[1] or keys[3]):  # W + (A or D)
+            return "up"
+        elif keys[0]:  # W
+            return "up"
+        elif keys[2] and keys[1]:  # S + A
+            return "left"
+        elif keys[2] and keys[3]:  # S + D
+            return "down"
+        elif keys[2]:  # S
+            return "down"
+        elif keys[1]:  # A
+            return "left"
+        elif keys[3]:  # D
+            return "right"
+        else:
+            return "center"
+    
+    def _update_trick_detection(self):
+        """Update trick detection system"""
+        current_time = time.time()
+        
+        # Check for trick input
+        if self.hands != ["center", "center"]:
+            trick = self.trick_system.check_trick_input(self.hands[0], self.hands[1])
+            if trick and not self.skateboard.airborne:
+                self.trick_system.execute_trick(trick)
+                self.animation_system.play_animation(trick)
+    
+    def _update_airborne_state(self):
+        """Update airborne state and landing detection"""
+        if self.skateboard.airborne:
+            # Check for landing
+            if self.hands == ["center", "center"]:
+                self._land_skateboard()
+    
+    def _land_skateboard(self):
+        """Land the skateboard"""
+        self.skateboard.airborne = False
+        self.skateboard.reset_rotation()
+        self.animation_system.animation_completed = True
+        self.audio.play_random_sound("Land", 5)
+    
+    def _update_ui(self):
+        """Update UI elements"""
+        # Update angle display
+        self.hud.update_angle_display(
+            self.skateboard.shuv_angle,
+            self.skateboard.flip_angle
+        )
+        
+        # Update control indicators
+        self.controls.update_arrows(
+            self.hands[0], self.hands[1],
+            self.keys_pressed, self.keys_pressed
+        )
+    
+    def handle_key_press(self, key):
+        """Handle key press events"""
+        key_mapping = {
+            'w': 'w', 'a': 'a', 's': 's', 'd': 'd',
+            'i': 'i', 'j': 'j', 'k': 'k', 'l': 'l'
+        }
+        
+        if key in key_mapping:
+            self.keys_pressed[key_mapping[key]] = True
+    
+    def handle_key_release(self, key):
+        """Handle key release events"""
+        key_mapping = {
+            'w': 'w', 'a': 'a', 's': 's', 'd': 'd',
+            'i': 'i', 'j': 'j', 'k': 'k', 'l': 'l'
+        }
+        
+        if key in key_mapping:
+            self.keys_pressed[key_mapping[key]] = False
+```
+
+## 8. Implementation Steps
+
+### Phase 1: Basic 3D Setup
+1. Set up Ursina project structure
+2. Load and display OBJ skateboard model
+3. Implement isometric camera system
+4. Create basic floor system
+
+### Phase 2: Core Systems
+1. Port trick detection system
+2. Implement 3D animation system for OBJ model
+3. Create rail system
+4. Add basic UI elements
+
+### Phase 3: Advanced Features
+1. Implement grinding system in 3D
+2. Add particle effects for tricks
+3. Create 3D level generation
+4. Optimize performance
+
+### Phase 4: Polish
+1. Add visual effects (shadows, lighting)
+2. Implement advanced animations
+3. Add menu system
+4. Performance optimization
+
+## 9. Key Technical Considerations
+
+### 9.1 OBJ Model Integration
+- Ensure OBJ model is properly scaled and oriented
+- Apply textures correctly to model faces
+- Handle model rotation around correct axes for tricks
+
+### 9.2 Isometric Projection
+- Use 30-degree camera angle for true isometric view
+- Implement proper depth sorting for 3D objects
+- Maintain visual consistency with original 2D game
+
+### 9.3 Performance Optimization
+- Use Ursina's built-in batching for similar objects
+- Implement LOD (Level of Detail) for distant objects
+- Optimize OBJ model for real-time rendering
+
+### 9.4 Input System
+- Maintain exact same WASD/IJKL control scheme
+- Add haptic feedback if supported
+- Implement touch controls for mobile compatibility
+
+### 9.5 Animation System
+- Convert 2D sprite animations to 3D rotation sequences for OBJ model
+- Maintain timing and frame rates from original
+- Add smooth interpolation between animation frames
+- Ensure OBJ model rotates around correct pivot points
+
+This blueprint provides a complete roadmap for converting the 2D skateboard game to a 2.5D isometric version using Ursina with an OBJ model instead of sprites, while preserving all existing functionality and adding 3D visual enhancements.
