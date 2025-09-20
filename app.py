@@ -18,8 +18,8 @@ class SkateboardApp:
         pygame.init()
         pygame.mixer.init()
         
-        # Create fullscreen window
-        self.display = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+        # Create windowed display - smaller window for more zoom out
+        self.display = pygame.display.set_mode((1200, 675))
         self.display_width = self.display.get_width()
         self.display_height = self.display.get_height()
         print(f"Display resolution: {self.display_width}x{self.display_height}")
@@ -66,13 +66,18 @@ class SkateboardApp:
         title_font_size = max(36, self.display_width // 25)
         
         # Load custom fonts from fonts folder
+        self.font_path = "fonts/ari-w9500.ttf"
+        self.title_font_path = "fonts/ari-w9500-bold.ttf"
+        
         try:
-            self.font = pygame.font.Font("fonts/ari-w9500.ttf", font_size)
-            self.title_font = pygame.font.Font("fonts/ari-w9500-bold.ttf", title_font_size)
+            self.font = pygame.font.Font(self.font_path, font_size)
+            self.title_font = pygame.font.Font(self.title_font_path, title_font_size)
             print("Loaded custom fonts successfully")
         except pygame.error as e:
             print(f"Warning: Could not load custom fonts: {e}")
             # Fallback to default fonts
+            self.font_path = None
+            self.title_font_path = None
             self.font = pygame.font.Font(None, font_size)
             self.title_font = pygame.font.Font(None, title_font_size)
         
@@ -89,7 +94,6 @@ class SkateboardApp:
         self.current_animation = None
         self.animation_frame = 0
         self.animation_timer = 0
-        self.animation_speed = 0.05
         self.animation_completed = False  # Track if animation has completed
         
         self._load_sprite_map()
@@ -110,8 +114,49 @@ class SkateboardApp:
             "Varial Kickflip": ["down", "down"],
             "Varial Heelflip": ["up", "up"],
             "Inward Heelflip": ["down", "up"],
-            "Hardflip": ["up", "down"]
+            "Hardflip": ["up", "down"],
+            "Tre Flip": ["double_down", "down"],
+            "Lazer Flip": ["double_up", "up"],
+            "360 Hardflip": ["double_up", "down"],
+            "360 Inward Heel": ["double_down", "up"]
             }
+        
+        # Trick Points System
+        self.trick_points = {
+            # Basic tricks - 100 points
+            "BS-Shuv-It": 100,
+            "FS-Shuv-It": 100,
+            "Nollie BS-Shuv-It": 100,
+            "Nollie FS-Shuv-It": 100,
+            "Kickflip": 100,
+            "Heelflip": 100,
+            "Nollie Kickflip": 100,
+            "Nollie Heelflip": 100,
+            
+            # Varial tricks - 200 points
+            "Varial Kickflip": 200,
+            "Varial Heelflip": 200,
+            "Inward Heelflip": 200,
+            "Hardflip": 200,
+            
+            # Advanced tricks - 300 points
+            "Tre Flip": 300,
+            "Lazer Flip": 300,
+            "360 Hardflip": 300,
+            "360 Inward Heel": 300,
+        }
+        
+        # Scoring system variables
+        self.total_points = 0
+        self.current_trick_points = 0
+        self.last_trick_score = 0
+        self.score_display_timer = 0
+        self.score_display_duration = 2.0
+        self.show_score = False
+        
+        # Trick chain tracking system
+        self.trick_chain = []  # List of tricks in current chain
+        self.max_chain_length = 3  # Maximum tricks in a chain
         
         # Animation behavior map - which animations should loop vs play once
         self.animation_loops = {
@@ -163,12 +208,10 @@ class SkateboardApp:
         self.spin_interval = 0.025  # Spin every 0.1 seconds
         self.spin_speed = 1
 
-        # Single angle setting
         # Default angle using new shuv/flip system (shuv_angle, flip_angle)
-        self.default_angle = (0, 0)  # (shuv_angle, flip_angle) for new sprite system
-        self.angle = self.default_angle  # (shuv_angle, flip_angle)
-        
-        # Scale factor for display - make it smaller for elevated camera view
+        self.default_angle = (0, 0)
+        self.angle = self.default_angle
+                # Scale factor for display - make it smaller for elevated camera view
         self.scale_factor = (max(self.display_width, self.display_height) / 120) * 0.2  # Reduced from 0.3 to 0.2 for more zoom out
         
         # Movement system - unified speed control
@@ -205,8 +248,13 @@ class SkateboardApp:
             'i': False, 'j': False, 'k': False, 'l': False
         }
         
+        # Double-press detection system
+        self.double_press_keys = ['w', 's', 'i', 'k']  # Keys that support double-press
+        self.key_press_times = {key: [] for key in self.double_press_keys}  # Track press times
+        self.double_press_threshold = 0.3  # Max time between presses for double-press (300ms)
+        self.double_press_detected = {key: False for key in self.double_press_keys}  # Current double-press state
+        
         # Trick detection variables
-        self.current_trick = None
         self.trick_start_time = 0
         self.trick_hold_duration = 0.2
         self.last_hand_combination = ["center", "center"]
@@ -235,6 +283,17 @@ class SkateboardApp:
         self.perfect_catch_frames = []  # List of perfect catch frame indices
         self.catch_tolerance = 5  # Frames on either side of perfect catch
         
+        # UI Animation system
+        self.ui_animations = {}  # Dictionary to store active UI animations
+        self.animation_easing_functions = {
+            'linear': lambda t: t,
+            'ease_out': lambda t: 1 - (1 - t) ** 2,
+            'ease_in': lambda t: t ** 2,
+            'ease_in_out': lambda t: 2 * t ** 2 if t < 0.5 else 1 - 2 * (1 - t) ** 2,
+            'bounce': lambda t: 1 - (1 - t) ** 4 if t < 0.5 else 1 - (1 - t) ** 4,
+            'elastic': lambda t: 1 - (1 - t) ** 3 * (1 - t) if t < 0.5 else 1 - (1 - t) ** 3 * (1 - t)
+        }
+        
         # Grind system variables
         self.grind_window_duration = 1  # Window to enter grind after trick (increased from 0.5)
         self.grind_window_start_time = 0  # When grind window starts
@@ -250,16 +309,30 @@ class SkateboardApp:
         self.holding_grind_trick = False  # Whether currently holding a grind trick
         self.pending_grind_trick = None  # Grind trick being held
         
+        # Grind exit window system
+        self.grind_exit_window_duration = 0.5  # Window to enter trick after releasing grind keys
+        self.grind_exit_window_start_time = 0  # When grind exit window starts
+        self.in_grind_exit_window = False  # Whether we're in the grind exit window
+        self.grind_exit_trick_hold_duration = 0.2  # Time to hold trick to exit grind
+        self.grind_exit_trick_hold_start_time = 0  # When grind exit trick hold started
+        self.holding_grind_exit_trick = False  # Whether currently holding a grind exit trick
+        self.pending_grind_exit_trick = None  # Grind exit trick being held
+        self.previous_hands_while_grinding = ["center", "center"]  # Track previous hand state for key release detection
+        
         # Wheels rolling sound management
         self.wheels_rolling_channel = 5
         self.wheels_sound_playing = False
         self.wheels_rolling_sound = None
         self.wheels_rolling_sound_floor = None
         
-        # Trick spin speed controls
-        self.shuv_spin_speed = 1      # Speed for shuv-it rotations (BS/FS Shuv-It)
-        self.flip_spin_speed = 1.5     # Speed for flip rotations (Kickflip, Heelflip) - increased by 1.7x
-        self.varial_spin_speed = 1.5    # Speed for varial rotations (Varial Kickflip, Varial Heelflip, Hardflip, Inward Heelflip)
+        # Trick spin speed controls (higher = faster)
+        self.shuv_spin_speed = 0.8     # Speed for shuv-it rotations (BS/FS Shuv-It)
+        self.flip_spin_speed = 2.0     # Speed for flip rotations (Kickflip, Heelflip)
+        self.varial_spin_speed = 1.0   # Speed for varial rotations (Varial Kickflip, Varial Heelflip, Hardflip, Inward Heelflip)
+        self.tre_flip_speed = 1      # Speed for Tre Flip (now same as others)
+        self.lazer_flip_speed = 1    # Speed for Lazer Flip
+        self.hardflip_360_speed = 1  # Speed for 360 Hardflip
+        self.inward_heel_360_speed = 1  # Speed for 360 Inward Heel
         
         
         # Load sound effects
@@ -293,10 +366,9 @@ class SkateboardApp:
             pygame.K_w: 'w', pygame.K_a: 'a', pygame.K_s: 's', pygame.K_d: 'd',
             pygame.K_i: 'i', pygame.K_j: 'j', pygame.K_k: 'k', pygame.K_l: 'l'
         }
-        
-        # Floor texture is loaded in _load_floor_texture()
-        
-        
+    
+    # ==================== RESOURCE LOADING ====================
+    
     def _load_sprite_map(self):
         """Load the sprite map image"""
         try:
@@ -387,13 +459,8 @@ class SkateboardApp:
                                         for mline in mf:
                                             if "Frames:" in mline:
                                                 total_frames = int(mline.split(":")[1].strip())
-                                                # For shuv and flip tricks, halve the frame count since we use every other frame
-                                                shuv_tricks = ["BS-Shuv-It", "FS-Shuv-It", "Nollie BS-Shuv-It", "Nollie FS-Shuv-It"]
-                                                flip_tricks = ["Kickflip", "Heelflip", "Nollie Kickflip", "Nollie Heelflip"]
-                                                if trick_name in shuv_tricks or trick_name in flip_tricks:
-                                                    metadata['frames'] = (total_frames + 1) // 2  # Round up division
-                                                else:
-                                                    metadata['frames'] = total_frames
+                                                # Use all frames for smooth animation
+                                                metadata['frames'] = total_frames
                                             elif "Frames per row:" in mline:
                                                 metadata['frames_per_row'] = int(mline.split(":")[1].strip())
                                         
@@ -458,6 +525,62 @@ class SkateboardApp:
             return self.new_sprite_map.subsurface(sprite_rect)
         
         return None
+
+    def _start_ui_animation(self, animation_id, animation_type, duration, start_values, end_values, easing='ease_out', loop=False):
+        """Start a UI animation"""
+        self.ui_animations[animation_id] = {
+            'type': animation_type,
+            'start_time': self._current_time,
+            'duration': duration,
+            'start_values': start_values,
+            'end_values': end_values,
+            'easing': easing,
+            'loop': loop,
+            'progress': 0.0
+        }
+    
+    def _update_ui_animations(self):
+        """Update all active UI animations"""
+        current_time = self._current_time
+        completed_animations = []
+        
+        for anim_id, anim in self.ui_animations.items():
+            elapsed = current_time - anim['start_time']
+            progress = min(elapsed / anim['duration'], 1.0)
+            
+            # Apply easing function
+            eased_progress = self.animation_easing_functions[anim['easing']](progress)
+            anim['progress'] = eased_progress
+            
+            # Check if animation is complete
+            if progress >= 1.0:
+                if anim['loop']:
+                    # Restart animation
+                    anim['start_time'] = current_time
+                    anim['progress'] = 0.0
+                else:
+                    completed_animations.append(anim_id)
+        
+        # Remove completed animations
+        for anim_id in completed_animations:
+            del self.ui_animations[anim_id]
+    
+    def _get_animated_value(self, animation_id, value_name):
+        """Get the current animated value for a specific animation and property"""
+        if animation_id not in self.ui_animations:
+            return None
+        
+        anim = self.ui_animations[animation_id]
+        start_val = anim['start_values'].get(value_name, 0)
+        end_val = anim['end_values'].get(value_name, 0)
+        
+        # Interpolate between start and end values
+        return start_val + (end_val - start_val) * anim['progress']
+    
+    def _stop_ui_animation(self, animation_id):
+        """Stop a specific UI animation"""
+        if animation_id in self.ui_animations:
+            del self.ui_animations[animation_id]
 
     def _load_sounds(self):
         """Load sound effects"""
@@ -563,6 +686,35 @@ class SkateboardApp:
                 'right': None
             }
     
+    def _play_catch_sound(self, pitch_multiplier=1.2):
+        """Play a random catch sound with optional pitch modification"""
+        catch_sounds = [f"SFX/Catch_{i}.mp3" for i in range(1, 4)]
+        catch_sound_file = random.choice(catch_sounds)
+        try:
+            catch_sound_original = pygame.mixer.Sound(catch_sound_file)
+            try:
+                import numpy as np
+                from scipy import signal
+                catch_array = pygame.sndarray.array(catch_sound_original)
+                new_length = int(len(catch_array) / pitch_multiplier)
+                catch_array_fast = signal.resample(catch_array, new_length).astype(catch_array.dtype)
+                catch_sound = pygame.sndarray.make_sound(catch_array_fast)
+            except ImportError:
+                catch_sound = catch_sound_original
+            catch_sound.play()
+        except Exception as e:
+            print(f"Could not play catch sound: {e}")
+    
+    def _play_land_sound(self):
+        """Play a random land sound"""
+        land_sounds = [f"SFX/Land_{i}.wav" for i in range(1, 5)]
+        land_sound_file = random.choice(land_sounds)
+        try:
+            land_sound = pygame.mixer.Sound(land_sound_file)
+            land_sound.play()
+        except Exception as e:
+            print(f"Could not play land sound: {e}")
+    
     def _load_grind_images(self):
         """Load grind images from the grinds folder"""
         try:
@@ -586,6 +738,8 @@ class SkateboardApp:
             # Create empty grind images dict to prevent errors
             self.grind_images = {}
     
+    # ==================== UTILITY METHODS ====================
+    
     def _update_time(self):
         """Optimized time management - update time only when needed"""
         current_ticks = pygame.time.get_ticks()
@@ -600,7 +754,6 @@ class SkateboardApp:
         
         # Limit cache size
         if len(self._scaled_surfaces) >= self._surface_cache_max_size:
-            # Remove oldest entry (simple FIFO)
             oldest_key = next(iter(self._scaled_surfaces))
             del self._scaled_surfaces[oldest_key]
         
@@ -629,7 +782,6 @@ class SkateboardApp:
                 self._create_fallback_floor_texture()
                 return
             
-            # Get all image files from levels folder
             image_extensions = ['.png', '.jpg', '.jpeg', '.bmp']
             level_files = []
             
@@ -763,7 +915,6 @@ class SkateboardApp:
             return (x, y, 128, 128)
         
         # Fallback to old system for backward compatibility
-        # Convert to old format for existing sprites
         x_angle = flip_angle  # Flip becomes X rotation
         y_angle = 90          # Keep Y at 90 for upright orientation
         z_angle = shuv_angle  # Shuv becomes Z rotation
@@ -785,6 +936,8 @@ class SkateboardApp:
         
         self.angle = (shuv_angle, flip_angle)
     
+    # ==================== INPUT HANDLING ====================
+    
     def _update_keyboard_controls(self):
         """Optimized hand region update based on keyboard input"""
         # Reset to center
@@ -799,14 +952,44 @@ class SkateboardApp:
                      self.keys_pressed['k'], self.keys_pressed['l']]
         
         # Left hand logic (WASD)
-        self.hands[0] = self._get_hand_direction(left_keys)
+        self.hands[0] = self._get_hand_direction(left_keys, is_left_hand=True)
         
         # Right hand logic (IJKL) 
-        self.hands[1] = self._get_hand_direction(right_keys)
+        self.hands[1] = self._get_hand_direction(right_keys, is_left_hand=False)
     
-    def _get_hand_direction(self, keys):
+    def _handle_key_press(self, key):
+        """Handle key press for double-press detection"""
+        if key in self.double_press_keys:
+            current_time = pygame.time.get_ticks() / 1000.0  # Convert to seconds
+            self.key_press_times[key].append(current_time)
+            
+            # Keep only recent press times (within threshold * 2)
+            cutoff_time = current_time - (self.double_press_threshold * 2)
+            self.key_press_times[key] = [t for t in self.key_press_times[key] if t > cutoff_time]
+            
+            # Check for double-press
+            if len(self.key_press_times[key]) >= 2:
+                time_diff = self.key_press_times[key][-1] - self.key_press_times[key][-2]
+                if time_diff <= self.double_press_threshold:
+                    self.double_press_detected[key] = True
+                    print(f"Double-press detected for key: {key}")
+    
+    def _get_hand_direction(self, keys, is_left_hand=True):
         """Helper method to determine hand direction from key states"""
         # keys = [up, left, down, right]
+        # Check for double-press first
+        if is_left_hand:
+            if keys[0] and self.double_press_detected['w']:  # Double W
+                return "double_up"
+            elif keys[2] and self.double_press_detected['s']:  # Double S
+                return "double_down"
+        else:
+            if keys[0] and self.double_press_detected['i']:  # Double I
+                return "double_up"
+            elif keys[2] and self.double_press_detected['k']:  # Double K
+                return "double_down"
+        
+        # Regular key combinations
         if keys[0] and (keys[1] or keys[3]):  # W + (A or D)
             return "up"
         elif keys[0]:  # W
@@ -823,6 +1006,8 @@ class SkateboardApp:
             return "right"
         else:
             return "center"
+    
+    # ==================== TRICK SYSTEM ====================
     
     def _check_trick_combination(self):
         """Check if current hand combination matches any trick in trick_map"""
@@ -851,7 +1036,6 @@ class SkateboardApp:
         # If we start a new combination (any non-center combo)
         if has_combination and current_combination != self.last_hand_combination:
             self.trick_start_time = current_time
-            print(f"Trick attempt started: {current_combination}")
             # Play start trick sound
             # if self.sounds['start_trick']:
             #     self.sounds['start_trick'].play()
@@ -864,8 +1048,6 @@ class SkateboardApp:
                 detected_trick = self._check_trick_combination()
                 if detected_trick:
                     self.do_trick(detected_trick, current_combination)
-                else:
-                    print(f"Invalid combination held: {current_combination}")
                 # Reset trick detection
                 self.trick_start_time = 0
         
@@ -878,14 +1060,25 @@ class SkateboardApp:
                     attempted_trick = trick_name
                     break
             
-            if attempted_trick:
-                print(f"Trick attempt cancelled: {attempted_trick}")
-            else:
-                print(f"Trick attempt cancelled: {self.last_hand_combination}")
             # Play cancel trick sound
             if self.sounds['cancel_trick']:
                 self.sounds['cancel_trick'].play()
             self.trick_start_time = 0
+        
+        # Check if we should stop current animation due to key release
+        if self.current_animation and not has_combination:
+            # Check if current animation requires the combination that's no longer held
+            current_trick_combination = None
+            for trick_name, required_hands in self.trick_map.items():
+                if trick_name == self.current_animation:
+                    current_trick_combination = required_hands
+                    break
+            
+            # If the current animation requires a combination that's no longer held, stop it
+            if current_trick_combination and current_trick_combination != ["center", "center"]:
+                self.current_animation = None
+                # Don't reset animation_frame - keep it on current frame
+                self.animation_completed = True
         
         # Check for foot movement sounds
         self._check_foot_movement_sounds(current_combination)
@@ -957,6 +1150,16 @@ class SkateboardApp:
     
     def _get_trick_spin_speed(self, trick_name):
         """Get the appropriate spin speed for a trick based on its type"""
+        # Special cases for 360° tricks
+        if trick_name == "Tre Flip":
+            return self.tre_flip_speed
+        elif trick_name == "Lazer Flip":
+            return self.lazer_flip_speed
+        elif trick_name == "360 Hardflip":
+            return self.hardflip_360_speed
+        elif trick_name == "360 Inward Heel":
+            return self.inward_heel_360_speed
+        
         # Shuv-it tricks
         shuv_tricks = ["BS-Shuv-It", "FS-Shuv-It", "Nollie BS-Shuv-It", "Nollie FS-Shuv-It"]
         
@@ -964,7 +1167,7 @@ class SkateboardApp:
         flip_tricks = ["Kickflip", "Heelflip", "Nollie Kickflip", "Nollie Heelflip"]
         
         # Varial tricks (combinations of flip + shuv)
-        varial_tricks = ["Varial Kickflip", "Varial Heelflip", "Hardflip", "Inward Heelflip"]
+        varial_tricks = ["Varial Kickflip", "Varial Heelflip", "Hardflip", "Inward Heelflip", "Tre Flip", "Lazer Flip", "360 Hardflip", "360 Inward Heel"]
         
         if trick_name in shuv_tricks:
             return self.shuv_spin_speed
@@ -977,9 +1180,11 @@ class SkateboardApp:
             return 1.0
     
     def do_trick(self, trick_name, foot_combination):
-        if self.airborne:
-            return
         """Execute the completed trick"""
+        # Only prevent tricks if we're airborne AND not in a grind exit window
+        # This allows the trick chain to continue after grinds
+        if self.airborne and not self.in_grind_exit_window:
+            return
         # Play pop sound
         pop_sounds = [f"SFX/Pop_{i}.wav" for i in range(1, 6)]
         pop_sound_file = random.choice(pop_sounds)
@@ -990,25 +1195,8 @@ class SkateboardApp:
             print(f"Could not play pop sound: {e}")
         
         # Play random catch sound with random pitch (1.7x to 1.8x)
-        catch_sounds = [f"SFX/Catch_{i}.mp3" for i in range(1, 4)]
-        catch_sound_file = random.choice(catch_sounds)
-        try:
-            catch_sound_original = pygame.mixer.Sound(catch_sound_file)
-            try:
-                import numpy as np
-                from scipy import signal
-                catch_array = pygame.sndarray.array(catch_sound_original)
-                # Random pitch between 1.7x to 1.8x
-                random_pitch = random.uniform(1.7, 1.8)
-                new_length = int(len(catch_array) / random_pitch)
-                catch_array_fast = signal.resample(catch_array, new_length).astype(catch_array.dtype)
-                catch_sound = pygame.sndarray.make_sound(catch_array_fast)
-            except ImportError:
-                # Fallback if scipy not available
-                catch_sound = catch_sound_original
-            catch_sound.play()
-        except Exception as e:
-            print(f"Could not play catch sound on pop: {e}")
+        random_pitch = random.uniform(1.7, 1.8)
+        self._play_catch_sound(random_pitch)
         
         # Start animation for the trick
         if trick_name in self.animation_maps:
@@ -1016,7 +1204,6 @@ class SkateboardApp:
             self.animation_frame = 0
             self.animation_timer = 0
             self.animation_completed = False  # Reset completion flag
-            print(f"Starting animation: {trick_name}")
         
         # Set airborne state and store trick info
         self.airborne = True
@@ -1024,6 +1211,9 @@ class SkateboardApp:
         self.original_flip_trick = trick_name  # Store original flip trick name for grind display
         self.trick_start_angle = self.angle
         self.landing_angle = self.angle
+        
+        # Add trick to chain
+        self._add_to_trick_chain(trick_name)
         
         # Reset landing detection feedback
         self.landing_success = False
@@ -1071,8 +1261,100 @@ class SkateboardApp:
             if i not in perfect_frames:  # Avoid duplicates if animation is very short
                 perfect_frames.append(i)
         
-        print(f"Perfect catch frames for {trick_name}: {perfect_frames} (total frames: {total_frames})")
         return perfect_frames
+    
+    def _calculate_trick_score(self, trick_name, catch_frame):
+        """Calculate points for a trick based on timing"""
+        if trick_name not in self.trick_points:
+            return 0, "NO POINTS", 0.0
+        
+        base_points = self.trick_points[trick_name]
+        
+        # Check if catch was on perfect frame
+        if catch_frame in self.perfect_catch_frames:
+            multiplier = 2.0
+            timing_text = "PERFECT!"
+        else:
+            # Check timing tolerance
+            min_distance = float('inf')
+            for perfect_frame in self.perfect_catch_frames:
+                distance = abs(catch_frame - perfect_frame)
+                min_distance = min(min_distance, distance)
+            
+            if min_distance == 1:
+                multiplier = 1.5
+                timing_text = "GREAT!"
+            elif min_distance == 2:
+                multiplier = 1.2
+                timing_text = "GOOD!"
+            else:
+                multiplier = 0.0
+                timing_text = "MISSED!"
+        
+        final_points = int(base_points * multiplier)
+        return final_points, timing_text, multiplier
+    
+    def _add_to_trick_chain(self, trick_name):
+        """Add a trick to the current trick chain"""
+        # Check if this trick would violate the flip -> grind -> flip pattern
+        if self._would_violate_chain_pattern(trick_name):
+            # Reset the chain and start fresh
+            self.trick_chain = []
+            print("Trick chain reset - pattern violation")
+        
+        # Add trick to chain
+        self.trick_chain.append(trick_name)
+        
+        # Limit chain length to max 3 tricks
+        if len(self.trick_chain) > self.max_chain_length:
+            self.trick_chain.pop(0)  # Remove oldest trick
+        
+        print(f"Trick chain: {' -> '.join(self.trick_chain)}")
+    
+    def _would_violate_chain_pattern(self, trick_name):
+        """Check if adding this trick would violate the flip -> grind -> flip pattern"""
+        if not self.trick_chain:
+            return False  # First trick is always allowed
+        
+        # Define trick types
+        flip_tricks = set(self.trick_map.keys())  # All flip tricks
+        grind_tricks = set(self.grind_trick_map.keys())  # All grind tricks
+        
+        # Get the last trick in the chain
+        last_trick = self.trick_chain[-1]
+        
+        # Determine what type of trick this is
+        is_flip = trick_name in flip_tricks
+        is_grind = trick_name in grind_tricks
+        
+        # Determine what type the last trick was
+        last_was_flip = last_trick in flip_tricks
+        last_was_grind = last_trick in grind_tricks
+        
+        # Pattern rules:
+        # 1. After a flip, only grinds are allowed
+        # 2. After a grind, only flips are allowed
+        # 3. No more than 3 tricks total
+        
+        if len(self.trick_chain) >= 3:
+            return True  # Already at max length
+        
+        if last_was_flip and not is_grind:
+            return True  # After flip, only grind allowed
+        
+        if last_was_grind and not is_flip:
+            return True  # After grind, only flip allowed
+        
+        return False
+    
+    def _get_trick_chain_display(self):
+        """Get the current trick chain as a display string"""
+        if not self.trick_chain:
+            return ""
+        
+        # Show last 3 tricks in chain for display
+        display_chain = self.trick_chain[-3:] if len(self.trick_chain) > 3 else self.trick_chain
+        return " -> ".join(display_chain)
     
     def _check_catch_input(self):
         """Check if player is attempting to catch the trick with perfect timing"""
@@ -1097,35 +1379,25 @@ class SkateboardApp:
             self.catch_attempted = True
             self.catch_feedback_timer = current_time
             
-            # Check if current frame is a perfect catch frame
-            if self.animation_frame in self.perfect_catch_frames:
+            # Calculate score based on catch timing
+            points, timing_text, multiplier = self._calculate_trick_score(self.current_trick_name, self.animation_frame)
+            
+            if points > 0:
                 self.catch_success = True
+                self.last_trick_score = points
+                self.total_points += points
+                self.show_score = True
+                self.score_display_timer = current_time
+                
                 
                 # Stop animation immediately when caught
                 if self.current_animation:
                     self.animation_completed = True
-                    print(f"Animation stopped after catch: {self.current_animation}")
                 
                 # Play catch sound
-                catch_sounds = [f"SFX/Catch_{i}.mp3" for i in range(1, 4)]
-                catch_sound_file = random.choice(catch_sounds)
-                try:
-                    catch_sound_original = pygame.mixer.Sound(catch_sound_file)
-                    try:
-                        import numpy as np
-                        from scipy import signal
-                        catch_array = pygame.sndarray.array(catch_sound_original)
-                        # Increase pitch by 1.2x for catch sound
-                        new_length = int(len(catch_array) / 1.2)
-                        catch_array_fast = signal.resample(catch_array, new_length).astype(catch_array.dtype)
-                        catch_sound = pygame.sndarray.make_sound(catch_array_fast)
-                    except ImportError:
-                        catch_sound = catch_sound_original
-                    catch_sound.play()
-                except Exception as e:
-                    print(f"Could not play catch sound: {e}")
+                self._play_catch_sound(1.2)
             else:
-                # Imperfect timing - death
+                # No points - death
                 self._trigger_death()
     
     def _trigger_death(self):
@@ -1172,7 +1444,6 @@ class SkateboardApp:
             current_time = self._current_time
             if current_time - self.death_timer >= self.death_duration:
                 # Death sequence complete - land the board
-                print("Death sequence complete - landing")
                 self._land_board()
                 return
             # Continue showing death effects during death duration
@@ -1188,6 +1459,9 @@ class SkateboardApp:
                         current_time = self._current_time
                         self.grind_window_start_time = current_time
                         self.in_grind_window = True
+                        # Pause animation at current frame instead of clearing it
+                        if self.current_animation:
+                            self.animation_completed = True  # Stop animation progression
                 else:
                     # No rail nearby - land immediately
                     self._land_board()
@@ -1211,9 +1485,7 @@ class SkateboardApp:
                 # Stop the animation immediately
                 if self.current_animation:
                     self.animation_completed = True  # Stop animation
-                    print(f"Animation stopped for {self.current_animation}")
                 
-                # All tricks now require catching - this section is handled by catch system
         
         # If we're in grind window, check for grind trick input
         if self.in_grind_window:
@@ -1222,6 +1494,10 @@ class SkateboardApp:
         # If we're grinding, check for grind exit
         if self.grinding:
             self._update_grinding_state()
+        
+        # If we're in grind exit window, check for trick input
+        if self.in_grind_exit_window:
+            self._check_grind_exit_trick_input()
     
     
     def _check_grind_trick_input(self):
@@ -1254,7 +1530,6 @@ class SkateboardApp:
                 hold_duration = current_time - self.grind_hold_start_time
                 
                 if hold_duration >= self.grind_hold_duration:
-                    print(f"Grind hold completed for: {grind_name} (held for {hold_duration:.2f}s)")
                     self._start_grind(grind_name)
                     self.holding_grind_trick = False
                     self.pending_grind_trick = None
@@ -1274,7 +1549,13 @@ class SkateboardApp:
         self.in_grind_window = False
         self.grind_start_time = self._current_time
         
-        # Clear current animation when grinding
+        # Reset previous hands state for key release detection
+        self.previous_hands_while_grinding = self.hands.copy()
+        
+        # Add grind to trick chain
+        self._add_to_trick_chain(grind_name)
+        
+        # Clear current animation when actually starting grind
         self.current_animation = None
         self.animation_frame = 0
         self.animation_completed = False
@@ -1302,15 +1583,15 @@ class SkateboardApp:
             distance_y = abs(skateboard_y - rail['y'])
             
             # Check if skateboard is within collision range of the rail
-            # Rail extends from rail['x'] to rail['x'] + rail['width'] * 6 (stretched)
+            # Rail extends from rail['x'] to rail['x'] + rail['width'] (already includes variation)
             rail_start_x = rail['x']
-            rail_end_x = rail['x'] + rail['width'] * 6  # Account for 6x stretch (fixed inconsistency)
+            rail_end_x = rail['x'] + rail['width']  # Use actual width (includes random variation)
             
             # Check if skateboard is horizontally within rail bounds and vertically close enough
             # Add some buffer to make collision detection more forgiving
             buffer = 80  # Increased buffer from 50 to 80 pixels
             if (rail_start_x - buffer <= skateboard_x <= rail_end_x + buffer) and distance_y < 120:
-                print(f"Rail collision detected: skateboard_x={skateboard_x}, rail_x={rail_start_x}-{rail_end_x}, distance_y={distance_y}")
+                #print(f"Rail collision detected: skateboard_x={skateboard_x}, rail_x={rail_start_x}-{rail_end_x}, distance_y={distance_y}")
                 return True
         
         return False
@@ -1324,7 +1605,7 @@ class SkateboardApp:
         for rail in self.rails:
             # Check if skateboard is currently on this rail
             rail_start_x = rail['x']
-            rail_end_x = rail['x'] + rail['width'] * 6  # Account for 6x stretch (consistent with collision)
+            rail_end_x = rail['x'] + rail['width']  # Use actual width (includes random variation)
             distance_y = abs(skateboard_y - rail['y'])
             
             # If we're on this rail (horizontally within bounds and vertically close)
@@ -1335,7 +1616,7 @@ class SkateboardApp:
         
         return False
     
-    def _land_board(self):
+    def _land_board(self, reset_trick_chain=True):
         """Land the board and reset all states"""
         # Store catch success state before resetting it
         was_caught_successfully = self.catch_success
@@ -1348,6 +1629,12 @@ class SkateboardApp:
         # Reset hold mechanic states
         self.holding_grind_trick = False
         self.pending_grind_trick = None
+        
+        # Reset grind exit window states
+        self.in_grind_exit_window = False
+        self.holding_grind_exit_trick = False
+        self.pending_grind_exit_trick = None
+        self.previous_hands_while_grinding = ["center", "center"]
         
         # Reset catch system states
         self.catch_required = False
@@ -1386,13 +1673,7 @@ class SkateboardApp:
 
         # Play landing sound only if trick was caught successfully
         if was_caught_successfully:
-            land_sounds = [f"SFX/Land_{i}.wav" for i in range(1, 5)]
-            land_sound_file = random.choice(land_sounds)
-            try:
-                land_sound = pygame.mixer.Sound(land_sound_file)
-                land_sound.play()
-            except Exception as e:
-                print(f"Could not play land sound: {e}")
+            self._play_land_sound()
             
             # Play success sound for caught trick
             if self.sounds['success']:
@@ -1401,6 +1682,11 @@ class SkateboardApp:
             # Play fail sound for missed catch
             if self.sounds['fail']:
                 self.sounds['fail'].play()
+        
+        # Reset trick chain if requested (default behavior)
+        if reset_trick_chain:
+            self.trick_chain = []
+            print(f"Trick chain reset")
         
         print(f"Landed")
         self.set_angle(0, 0)  # Reset to default shuv/flip angles
@@ -1415,9 +1701,18 @@ class SkateboardApp:
             self._exit_grind("rail_end")
             return
         
+        # Check if keys were just released (transition from non-center to center)
+        keys_just_released = (self.previous_hands_while_grinding != ["center", "center"] and 
+                             self.hands == ["center", "center"])
+        
+        # Update previous hands state
+        self.previous_hands_while_grinding = self.hands.copy()
+        
         # Allow manual exit by releasing all keys after minimum duration
         if self.hands == ["center", "center"] and grind_duration >= self.min_grind_duration:
-            self._exit_grind("manual")
+            # Start grind exit window when keys are released
+            if keys_just_released and not self.in_grind_exit_window:
+                self._start_grind_exit_window()
     
     def _exit_grind(self, reason):
         """Exit the current grind"""
@@ -1428,16 +1723,124 @@ class SkateboardApp:
             print(f"Could not stop grind sound: {e}")
         
         # Play grind exit sound
-        land_sounds = [f"SFX/Land_{i}.wav" for i in range(1, 5)]
-        land_sound_file = random.choice(land_sounds)
-        try:
-            land_sound = pygame.mixer.Sound(land_sound_file)
-            land_sound.play()
-        except Exception as e:
-            print(f"Could not play land sound: {e}")
+        self._play_land_sound()
         
-        # Land the board
-        self._land_board()
+        # Exit grind while preserving trick chain
+        self._exit_grind_preserve_chain()
+    
+    def _exit_grind_preserve_chain(self):
+        """Exit grind while preserving trick chain for continued chaining"""
+        # Reset grind-specific states
+        self.grinding = False
+        self.grind_trick = None
+        self.grind_start_time = 0
+        self.in_grind_window = False
+        
+        # Reset airborne state but keep trick chain
+        self.airborne = False
+        self.current_animation = None
+        self.animation_frame = 0
+        self.animation_completed = False
+        
+        # Reset angles
+        self.set_angle(0, 0)
+        
+        # Clear current trick name but keep chain
+        self.current_trick_name = None
+        self.original_flip_trick = None
+        
+        # Reset catch system
+        self.catch_required = False
+        self.catch_success = False
+        self.catch_attempted = False
+        self.catch_feedback_timer = 0
+        
+        # Reset other states but preserve trick chain
+        self.in_grind_window = False
+        self.holding_grind_trick = False
+        self.pending_grind_trick = None
+        self.dead = False
+        self.death_timer = 0
+        self.perfect_catch_frames = []
+        self.move_speed = 30
+        self.scale_factor = (max(self.display_width, self.display_height) / 120) * 0.2
+        
+        # Stop sounds
+        if self.wheels_rolling_sound:
+            pygame.mixer.Channel(self.wheels_rolling_channel).stop()
+            self.wheels_sound_playing = False
+        
+        print(f"Exited grind, trick chain preserved: {' -> '.join(self.trick_chain)}")
+    
+    def _start_grind_exit_window(self):
+        """Start the grind exit window to allow trick input"""
+        self.in_grind_exit_window = True
+        self.grind_exit_window_start_time = self._current_time
+        print(f"Grind exit window started - 0.5s to enter trick combination")
+    
+    def _check_grind_exit_trick_input(self):
+        """Check if current hand combination matches any trick during grind exit window"""
+        current_time = self._current_time
+        
+        # Check if we're still in the exit window
+        if current_time - self.grind_exit_window_start_time >= self.grind_exit_window_duration:
+            # Exit window expired, exit grind normally
+            self._exit_grind("manual")
+            return
+        
+        # Check if hands are back to center (no trick input)
+        if self.hands == ["center", "center"]:
+            # If we were holding a grind exit trick, stop holding it
+            if self.holding_grind_exit_trick:
+                self.holding_grind_exit_trick = False
+                self.pending_grind_exit_trick = None
+            return
+        
+        # Check each trick in the trick map (not grind tricks)
+        for trick_name, required_hands in self.trick_map.items():
+            if self.hands == required_hands:
+                # If this is a new trick or we're not holding any
+                if not self.holding_grind_exit_trick or self.pending_grind_exit_trick != trick_name:
+                    self.holding_grind_exit_trick = True
+                    self.pending_grind_exit_trick = trick_name
+                    self.grind_exit_trick_hold_start_time = current_time
+                    print(f"Grind exit trick hold started: {trick_name}")
+                    break
+                else:
+                    # Continue holding the same trick
+                    hold_duration = current_time - self.grind_exit_trick_hold_start_time
+                    if hold_duration >= self.grind_exit_trick_hold_duration:
+                        print(f"Grind exit trick hold completed: {trick_name} (held for {hold_duration:.2f}s)")
+                        self._exit_grind_with_trick(trick_name)
+                        self.holding_grind_exit_trick = False
+                        self.pending_grind_exit_trick = None
+                        return
+    
+    def _exit_grind_with_trick(self, trick_name):
+        """Exit grind and immediately start the specified trick"""
+        # Stop the grind sound
+        try:
+            pygame.mixer.Channel(6).stop()
+        except Exception as e:
+            print(f"Could not stop grind sound: {e}")
+        
+        # Play grind exit sound
+        self._play_land_sound()
+        
+        # Reset grind-specific states
+        self.grinding = False
+        self.grind_trick = None
+        self.grind_start_time = 0
+        self.in_grind_window = False
+        self.in_grind_exit_window = False
+        self.holding_grind_exit_trick = False
+        self.pending_grind_exit_trick = None
+        
+        # Start the trick immediately
+        self.do_trick(trick_name, self.hands)
+        print(f"Exited grind with trick: {trick_name}")
+    
+    # ==================== RAIL SYSTEM ====================
     
     def _spawn_rail(self):
         """Spawn a new rail on the right side of the screen"""
@@ -1447,6 +1850,11 @@ class SkateboardApp:
         # Get rail image dimensions
         rail_width = self.rail_image.get_width()
         rail_height = self.rail_image.get_height()
+        
+        # Add random length variation (1.2x to 1.8x the current 6x stretch)
+        # Current stretch is 6x, so we'll vary between 7.2x and 10.8x
+        length_multiplier = random.uniform(7, 10)
+        rail_width = int(rail_width * length_multiplier)
         
         # Calculate rail position - start from right edge, align with skateboard
         rail_x = self.display_width
@@ -1469,8 +1877,8 @@ class SkateboardApp:
             for rail in self.rails[:]:  # Use slice to avoid modification during iteration
                 rail['x'] -= self.move_speed
                 
-                # Remove rails that are off-screen (account for 6x stretch)
-                if rail['x'] + (rail['width'] * 6) < 0:
+                # Remove rails that are off-screen (use actual width)
+                if rail['x'] + rail['width'] < 0:
                     self.rails.remove(rail)
     
     def _render_rails(self):
@@ -1479,11 +1887,13 @@ class SkateboardApp:
             return
             
         for rail in self.rails:
-            # Stretch rail to 6x width for longer rails
-            stretched_width = rail['width'] * 6
-            scale_key = f"rail_{stretched_width}_{rail['height']}"
-            stretched_rail = self._get_cached_surface(self.rail_image, stretched_width, rail['height'], scale_key)
+            # Use the pre-calculated width (already includes random variation)
+            rail_width = rail['width']
+            scale_key = f"rail_{rail_width}_{rail['height']}"
+            stretched_rail = self._get_cached_surface(self.rail_image, rail_width, rail['height'], scale_key)
             self.display.blit(stretched_rail, (rail['x'], rail['y']))
+    
+    # ==================== ANIMATION SYSTEM ====================
     
     def _update_animation(self):
         """Update the current animation frame"""
@@ -1498,12 +1908,17 @@ class SkateboardApp:
         
         # Get the appropriate spin speed for this trick
         trick_spin_speed = self._get_trick_spin_speed(self.current_animation)
-        current_animation_speed = self.animation_speed / trick_spin_speed
+        
+        # Normalize animation speed based on frame count to make all tricks same duration
+        metadata = self.animation_metadata[self.current_animation]
+        total_frames = metadata['frames']
+        base_duration = 0.6  # Target duration in seconds for all tricks (2.5x faster)
+        normalized_speed = base_duration / total_frames
+        
+        current_animation_speed = normalized_speed / trick_spin_speed
         
         # Check if enough time has passed to advance frame
         if current_time - self.animation_timer >= current_animation_speed:
-            metadata = self.animation_metadata[self.current_animation]
-            total_frames = metadata['frames']
             
             # Check if this animation should loop
             should_loop = self.animation_loops.get(self.current_animation, True)  # Default to looping
@@ -1522,6 +1937,8 @@ class SkateboardApp:
                     self.animation_completed = True
             
             self.animation_timer = current_time
+    
+    # ==================== RENDERING SYSTEM ====================
     
     def render_board(self, shuv_angle: float, flip_angle: float, 
                     center_x: int = None, center_y: int = None, 
@@ -1585,6 +2002,9 @@ class SkateboardApp:
         # Draw death effect (red screen flash) - keep this for visual feedback
         self._draw_death_effect()
         
+        # Draw scoring display
+        self._draw_scoring_display()
+        
         # Update display
         pygame.display.flip()
         
@@ -1599,19 +2019,14 @@ class SkateboardApp:
         metadata = self.animation_metadata[self.current_animation]
         
         frames_per_row = metadata['frames_per_row']
+        total_frames = metadata['frames']
         
         # Get the correct sprite size for this animation
         # Check if this is a new animation (128x128) or old animation (64x64)
-        animation_sprite_size = 128 if self.current_animation in ['BS-Shuv-It', 'FS-Shuv-It', 'Kickflip', 'Heelflip', 'Varial Kickflip', 'Varial Heelflip', 'Inward Heelflip', 'Hardflip'] else self.sprite_size
+        animation_sprite_size = 128 if self.current_animation in ['BS-Shuv-It', 'FS-Shuv-It', 'Kickflip', 'Heelflip', 'Nollie Kickflip', 'Nollie Heelflip', 'Varial Kickflip', 'Varial Heelflip', 'Inward Heelflip', 'Hardflip', 'Tre Flip', 'Lazer Flip', '360 Hardflip', '360 Inward Heel'] else self.sprite_size
         
-        # For shuv and flip tricks, use every other frame to halve the animation
-        shuv_tricks = ["BS-Shuv-It", "FS-Shuv-It", "Nollie BS-Shuv-It", "Nollie FS-Shuv-It"]
-        flip_tricks = ["Kickflip", "Heelflip", "Nollie Kickflip", "Nollie Heelflip"]
-        if self.current_animation in shuv_tricks or self.current_animation in flip_tricks:
-            # Use every other frame (0, 2, 4, 6, 8, etc.) for 30-degree snaps
-            actual_frame = self.animation_frame * 2
-        else:
-            actual_frame = self.animation_frame
+        # Use all frames for smooth animation
+        actual_frame = min(self.animation_frame, total_frames - 1)
         
         # Calculate which frame to render
         frame_x = (actual_frame % frames_per_row) * animation_sprite_size
@@ -1809,7 +2224,7 @@ class SkateboardApp:
         self.display.blit(text_surface, text_rect)
     
     def _draw_trick_feedback(self):
-        """Draw trick detection feedback on the display"""
+        """Draw trick detection feedback on the display with animations"""
         current_time = self._current_time
         
         # Show trick feedback if we're starting a trick, airborne with a trick, attempting a grind, actively grinding, or have a completed trick result
@@ -1823,55 +2238,133 @@ class SkateboardApp:
         if should_show_feedback:
             # Determine what trick to show - check grind states first
             if self.grinding and hasattr(self, 'grind_trick') and self.grind_trick:
-                # We're currently grinding - show the active grind trick with flip name
-                if hasattr(self, 'original_flip_trick') and self.original_flip_trick:
-                    combo_text = f"{self.original_flip_trick} -> {self.grind_trick}"
-                else:
-                    combo_text = f"{self.grind_trick}"
+                # We're currently grinding - show the full trick chain
+                combo_text = self._get_trick_chain_display()
                 text_color = self.colors['accent']  # Green while successfully grinding
+                
+                # Start pulsing animation for grinding
+                if 'grind_pulse' not in self.ui_animations:
+                    self._start_ui_animation('grind_pulse', 'pulse', 1.0, 
+                                           {'scale': 1.0, 'alpha': 255}, 
+                                           {'scale': 1.2, 'alpha': 200}, 
+                                           'ease_in_out', loop=True)
             elif self.in_grind_window and hasattr(self, 'pending_grind_trick') and self.pending_grind_trick:
-                # We're in grind window and attempting a grind trick - show flip -> grind format
-                if hasattr(self, 'original_flip_trick') and self.original_flip_trick:
-                    combo_text = f"{self.original_flip_trick} -> {self.pending_grind_trick}"
+                # We're in grind window and attempting a grind trick - show chain with pending grind
+                if self.trick_chain:
+                    combo_text = f"{' -> '.join(self.trick_chain)} -> {self.pending_grind_trick}"
                 else:
                     combo_text = f"{self.pending_grind_trick}"
                 text_color = (255, 255, 255)  # White while attempting grind
+                
+                # Start sliding animation for grind window
+                if 'grind_window_slide' not in self.ui_animations:
+                    self._start_ui_animation('grind_window_slide', 'slide', 0.3, 
+                                           {'offset_x': -50, 'scale': 0.8}, 
+                                           {'offset_x': 0, 'scale': 1.0}, 
+                                           'ease_out')
             elif hasattr(self, 'current_trick_name') and self.current_trick_name:
-                # We have an active flip trick
-                combo_text = f"{self.current_trick_name}"
+                # We have an active flip trick - show the full chain
+                combo_text = self._get_trick_chain_display()
                 
                 # Determine text color based on catch state
                 if self.catch_required and self.catch_attempted:
                     # Trick has been attempted - show result
                     if self.catch_success:
                         text_color = self.colors['accent']  # Green for success
+                        # Start success animation
+                        if 'trick_success' not in self.ui_animations:
+                            self._start_ui_animation('trick_success', 'bounce', 0.5, 
+                                                   {'scale': 0.5, 'alpha': 255}, 
+                                                   {'scale': 1.3, 'alpha': 255}, 
+                                                   'bounce')
                     else:
                         text_color = (255, 100, 100)  # Red for failure
+                        # Start failure animation
+                        if 'trick_failure' not in self.ui_animations:
+                            self._start_ui_animation('trick_failure', 'shake', 0.3, 
+                                                   {'offset_x': 0, 'scale': 1.0}, 
+                                                   {'offset_x': 5, 'scale': 1.0}, 
+                                                   'ease_in_out')
                 else:
                     # Trick is active but not yet caught - show white
                     text_color = (255, 255, 255)  # White while trick is active
+                    
+                    # Start pulsing animation for active trick
+                    if 'trick_active_pulse' not in self.ui_animations:
+                        self._start_ui_animation('trick_active_pulse', 'pulse', 0.8, 
+                                               {'scale': 1.0, 'alpha': 255}, 
+                                               {'scale': 1.1, 'alpha': 200}, 
+                                               'ease_in_out', loop=True)
             elif self.trick_start_time > 0:
-                # We're starting a trick - show current combination
+                # We're starting a trick - show current combination with chain
                 detected_trick = self._check_trick_combination()
                 if detected_trick:
-                    combo_text = f"{detected_trick}"
+                    if self.trick_chain:
+                        combo_text = f"{' -> '.join(self.trick_chain)} -> {detected_trick}"
+                    else:
+                        combo_text = f"{detected_trick}"
                     text_color = (255, 255, 255)  # White while holding keys
+                    
+                    # Start scale-in animation for detected trick
+                    if 'trick_detected_scale' not in self.ui_animations:
+                        self._start_ui_animation('trick_detected_scale', 'scale', 0.2, 
+                                               {'scale': 0.3, 'alpha': 255}, 
+                                               {'scale': 1.0, 'alpha': 255}, 
+                                               'ease_out')
                 else:
                     combo_text = f"{self.hands[0]} + {self.hands[1]}"
                     text_color = self.colors['warning']  # Yellow for invalid combo
+                    
+                    # Start shake animation for invalid combo
+                    if 'invalid_combo_shake' not in self.ui_animations:
+                        self._start_ui_animation('invalid_combo_shake', 'shake', 0.2, 
+                                               {'offset_x': 0, 'scale': 1.0}, 
+                                               {'offset_x': 3, 'scale': 1.0}, 
+                                               'ease_in_out')
             else:
                 return  # Nothing to show
             
-            # Use smaller font for trick feedback
-            text_surface = self.font.render(combo_text, True, text_color)
-            # Position text lower on screen (3/4ths down)
+            # Get animation values
+            scale = 1.0
+            offset_x = 0
+            alpha = 255
+            
+            if 'grind_pulse' in self.ui_animations:
+                scale = self._get_animated_value('grind_pulse', 'scale') or 1.0
+                alpha = int(self._get_animated_value('grind_pulse', 'alpha') or 255)
+            elif 'grind_window_slide' in self.ui_animations:
+                scale = self._get_animated_value('grind_window_slide', 'scale') or 1.0
+                offset_x = int(self._get_animated_value('grind_window_slide', 'offset_x') or 0)
+            elif 'trick_success' in self.ui_animations:
+                scale = self._get_animated_value('trick_success', 'scale') or 1.0
+            elif 'trick_failure' in self.ui_animations:
+                offset_x = int(self._get_animated_value('trick_failure', 'offset_x') or 0)
+            elif 'trick_active_pulse' in self.ui_animations:
+                scale = self._get_animated_value('trick_active_pulse', 'scale') or 1.0
+                alpha = int(self._get_animated_value('trick_active_pulse', 'alpha') or 255)
+            elif 'trick_detected_scale' in self.ui_animations:
+                scale = self._get_animated_value('trick_detected_scale', 'scale') or 1.0
+            elif 'invalid_combo_shake' in self.ui_animations:
+                offset_x = int(self._get_animated_value('invalid_combo_shake', 'offset_x') or 0)
+            
+            # Apply scale to font size
+            font_size = int(24 * scale)  # Base font size is 24
+            scaled_font = pygame.font.Font(self.font_path, font_size) if self.font_path else pygame.font.Font(None, font_size)
+            
+            # Use scaled font for trick feedback
+            text_surface = scaled_font.render(combo_text, True, text_color)
+            # Position text lower on screen (3/4ths down) with offset
             text_y = int(self.display_height * 3 / 4)
-            text_rect = text_surface.get_rect(center=(self._display_center_x, text_y))
+            text_rect = text_surface.get_rect(center=(self._display_center_x + offset_x, text_y))
             
             # Create black drop shadow by rendering the same text in black, offset by 2 pixels
-            shadow_surface = self.font.render(combo_text, True, (0, 0, 0))
-            shadow_rect = shadow_surface.get_rect(center=(self._display_center_x + 2, text_y + 2))
+            shadow_surface = scaled_font.render(combo_text, True, (0, 0, 0))
+            shadow_rect = shadow_surface.get_rect(center=(self._display_center_x + offset_x + 2, text_y + 2))
             self.display.blit(shadow_surface, shadow_rect)
+            
+            # Apply alpha if needed
+            if alpha < 255:
+                text_surface.set_alpha(alpha)
             
             # Draw the main text on top
             self.display.blit(text_surface, text_rect)
@@ -1890,7 +2383,7 @@ class SkateboardApp:
                 # Background bar
                 pygame.draw.rect(self.display, self.colors['progress_bg'], (bar_x, bar_y, bar_width, bar_height))
                 
-                # Progress bar with distinct color phases
+                # Progress bar with distinct color phases and smooth animation
                 progress_width = int(bar_width * progress)
                 
                 # Determine color based on progress phases
@@ -1901,13 +2394,21 @@ class SkateboardApp:
                 else:
                     color = self.colors['accent']  # Green for final third
                 
-                pygame.draw.rect(self.display, color, (bar_x, bar_y, progress_width, bar_height))
+                # Animate progress bar fill
+                if 'progress_bar_fill' not in self.ui_animations:
+                    self._start_ui_animation('progress_bar_fill', 'fill', 0.1, 
+                                           {'width': 0}, 
+                                           {'width': progress_width}, 
+                                           'ease_out')
+                
+                animated_width = int(self._get_animated_value('progress_bar_fill', 'width') or progress_width)
+                pygame.draw.rect(self.display, color, (bar_x, bar_y, animated_width, bar_height))
                 
                 # Border
                 pygame.draw.rect(self.display, self.colors['border'], (bar_x, bar_y, bar_width, bar_height), 5)
     
     def _draw_landing_feedback(self):
-        """Draw landing detection feedback on the display"""
+        """Draw landing detection feedback on the display with animations"""
         current_time = self._current_time
         
         # Check if we should show landing feedback
@@ -1919,34 +2420,65 @@ class SkateboardApp:
             # Choose color and text based on landing success
             if self.landing_success:
                 color = self.colors['accent']  # Green for success
-                text = ""  # Removed text display
+                text = "PERFECT LANDING!"
+                
+                # Start success animation
+                if 'landing_success' not in self.ui_animations:
+                    self._start_ui_animation('landing_success', 'bounce', 0.6, 
+                                           {'scale': 0.3, 'offset_y': 0}, 
+                                           {'scale': 1.2, 'offset_y': -20}, 
+                                           'bounce')
             else:
                 color = self.colors['danger']  # Red for failure
-                text = ""  # Removed text display
+                text = "MISSED LANDING!"
+                
+                # Start failure animation
+                if 'landing_failure' not in self.ui_animations:
+                    self._start_ui_animation('landing_failure', 'shake', 0.4, 
+                                           {'scale': 1.0, 'offset_x': 0}, 
+                                           {'scale': 1.1, 'offset_x': 5}, 
+                                           'ease_in_out')
             
-            # Skip text rendering when text is empty
-            if text:  # Only render if there's text to display
-                # Create text surface
-                text_surface = self.title_font.render(text, True, color)
-                text_rect = text_surface.get_rect(center=(self._display_center_x, 150))
-                
-                # Draw background rectangle for better visibility
-                bg_rect = text_rect.inflate(40, 20)
-                bg_color = (*self.colors['background'], alpha)
-                bg_surface = pygame.Surface((bg_rect.width, bg_rect.height))
-                bg_surface.set_alpha(alpha)
-                bg_surface.fill(self.colors['background'])
-                self.display.blit(bg_surface, bg_rect)
-                
-                # Draw the text
-                self.display.blit(text_surface, text_rect)
-                
-                # Draw border
-                border_color = (*color, alpha)
-                pygame.draw.rect(self.display, color, bg_rect, 3)
+            # Get animation values
+            scale = 1.0
+            offset_x = 0
+            offset_y = 0
+            
+            if 'landing_success' in self.ui_animations:
+                scale = self._get_animated_value('landing_success', 'scale') or 1.0
+                offset_y = int(self._get_animated_value('landing_success', 'offset_y') or 0)
+            elif 'landing_failure' in self.ui_animations:
+                scale = self._get_animated_value('landing_failure', 'scale') or 1.0
+                offset_x = int(self._get_animated_value('landing_failure', 'offset_x') or 0)
+            
+            # Apply scale to font size
+            font_size = int(36 * scale)  # Base font size is 36
+            scaled_font = pygame.font.Font(self.font_path, font_size) if self.font_path else pygame.font.Font(None, font_size)
+            
+            # Create text surface
+            text_surface = scaled_font.render(text, True, color)
+            text_rect = text_surface.get_rect(center=(self._display_center_x + offset_x, 150 + offset_y))
+            
+            # Draw background rectangle for better visibility
+            bg_rect = text_rect.inflate(40, 20)
+            bg_color = (*self.colors['background'], alpha)
+            bg_surface = pygame.Surface((bg_rect.width, bg_rect.height))
+            bg_surface.set_alpha(alpha)
+            bg_surface.fill(self.colors['background'])
+            self.display.blit(bg_surface, bg_rect)
+            
+            # Apply alpha to text
+            text_surface.set_alpha(alpha)
+            
+            # Draw the text
+            self.display.blit(text_surface, text_rect)
+            
+            # Draw border
+            border_color = (*color, alpha)
+            pygame.draw.rect(self.display, color, bg_rect, 3)
     
     def _draw_grind_feedback(self):
-        """Draw grind detection feedback on the display"""
+        """Draw grind detection feedback on the display with animations"""
         current_time = self._current_time
         
         # Show grind window indicator
@@ -1959,12 +2491,27 @@ class SkateboardApp:
             text = "GRIND WINDOW - Input trick!"
             color = self.colors['warning']  # Yellow for grind window
             
+            # Start pulsing animation for grind window
+            if 'grind_window_pulse' not in self.ui_animations:
+                self._start_ui_animation('grind_window_pulse', 'pulse', 0.8, 
+                                       {'scale': 1.0, 'glow': 0}, 
+                                       {'scale': 1.1, 'glow': 20}, 
+                                       'ease_in_out', loop=True)
+            
+            # Get animation values
+            scale = self._get_animated_value('grind_window_pulse', 'scale') or 1.0
+            glow = int(self._get_animated_value('grind_window_pulse', 'glow') or 0)
+            
+            # Apply scale to font size
+            font_size = int(32 * scale)  # Base font size is 32
+            scaled_font = pygame.font.Font(self.font_path, font_size) if self.font_path else pygame.font.Font(None, font_size)
+            
             # Create text surface
-            text_surface = self.title_font.render(text, True, color)
+            text_surface = scaled_font.render(text, True, color)
             text_rect = text_surface.get_rect(center=(self._display_center_x, 200))
             
-            # Draw background rectangle for better visibility
-            bg_rect = text_rect.inflate(40, 20)
+            # Draw background rectangle for better visibility with glow effect
+            bg_rect = text_rect.inflate(40 + glow, 20 + glow)
             bg_surface = pygame.Surface((bg_rect.width, bg_rect.height))
             bg_surface.set_alpha(alpha)
             bg_surface.fill(self.colors['background'])
@@ -1973,9 +2520,8 @@ class SkateboardApp:
             # Draw the text
             self.display.blit(text_surface, text_rect)
             
-            # Draw border
+            # Draw border with glow
             pygame.draw.rect(self.display, color, bg_rect, 3)
-
             
             # Draw progress bar for grind window
             bar_width = 300
@@ -1986,10 +2532,19 @@ class SkateboardApp:
             # Background bar
             pygame.draw.rect(self.display, self.colors['progress_bg'], (bar_x, bar_y, bar_width, bar_height))
             
-            # Progress bar
+            # Progress bar with smooth animation
             progress = time_remaining / self.grind_window_duration
             progress_width = int(bar_width * progress)
-            pygame.draw.rect(self.display, color, (bar_x, bar_y, progress_width, bar_height))
+            
+            # Animate progress bar fill
+            if 'grind_progress_fill' not in self.ui_animations:
+                self._start_ui_animation('grind_progress_fill', 'fill', 0.1, 
+                                       {'width': 0}, 
+                                       {'width': progress_width}, 
+                                       'ease_out')
+            
+            animated_width = int(self._get_animated_value('grind_progress_fill', 'width') or progress_width)
+            pygame.draw.rect(self.display, color, (bar_x, bar_y, animated_width, bar_height))
             
             # Border
             pygame.draw.rect(self.display, self.colors['border'], (bar_x, bar_y, bar_width, bar_height), 2)
@@ -2003,12 +2558,27 @@ class SkateboardApp:
             text = f"GRINDING: {self.grind_trick}"
             color = self.colors['accent']  # Green for grinding
             
+            # Start pulsing animation for active grinding
+            if 'grind_active_pulse' not in self.ui_animations:
+                self._start_ui_animation('grind_active_pulse', 'pulse', 1.2, 
+                                       {'scale': 1.0, 'glow': 0}, 
+                                       {'scale': 1.15, 'glow': 15}, 
+                                       'ease_in_out', loop=True)
+            
+            # Get animation values
+            scale = self._get_animated_value('grind_active_pulse', 'scale') or 1.0
+            glow = int(self._get_animated_value('grind_active_pulse', 'glow') or 0)
+            
+            # Apply scale to font size
+            font_size = int(32 * scale)  # Base font size is 32
+            scaled_font = pygame.font.Font(self.font_path, font_size) if self.font_path else pygame.font.Font(None, font_size)
+            
             # Create text surface
-            text_surface = self.title_font.render(text, True, color)
+            text_surface = scaled_font.render(text, True, color)
             text_rect = text_surface.get_rect(center=(self._display_center_x, 200))
             
-            # Draw background rectangle for better visibility
-            bg_rect = text_rect.inflate(40, 20)
+            # Draw background rectangle for better visibility with glow
+            bg_rect = text_rect.inflate(40 + glow, 20 + glow)
             bg_surface = pygame.Surface((bg_rect.width, bg_rect.height))
             bg_surface.set_alpha(180)
             bg_surface.fill(self.colors['background'])
@@ -2017,7 +2587,7 @@ class SkateboardApp:
             # Draw the text
             self.display.blit(text_surface, text_rect)
             
-            # Draw border
+            # Draw border with glow
             pygame.draw.rect(self.display, color, bg_rect, 3)
             
             # Show remaining time
@@ -2035,14 +2605,29 @@ class SkateboardApp:
                 text = "NEAR RAIL - Input grind trick!"
             color = self.colors['secondary']  # Light gray for rail proximity
             
+            # Start subtle pulsing for rail proximity
+            if 'rail_proximity_pulse' not in self.ui_animations:
+                self._start_ui_animation('rail_proximity_pulse', 'pulse', 1.5, 
+                                       {'alpha': 150, 'scale': 1.0}, 
+                                       {'alpha': 200, 'scale': 1.05}, 
+                                       'ease_in_out', loop=True)
+            
+            # Get animation values
+            alpha = int(self._get_animated_value('rail_proximity_pulse', 'alpha') or 150)
+            scale = self._get_animated_value('rail_proximity_pulse', 'scale') or 1.0
+            
+            # Apply scale to font size
+            font_size = int(20 * scale)  # Base font size is 20
+            scaled_font = pygame.font.Font(self.font_path, font_size) if self.font_path else pygame.font.Font(None, font_size)
+            
             # Create text surface
-            text_surface = self.font.render(text, True, color)
+            text_surface = scaled_font.render(text, True, color)
             text_rect = text_surface.get_rect(center=(self._display_center_x, 250))
             
             # Draw background rectangle for better visibility
             bg_rect = text_rect.inflate(20, 10)
             bg_surface = pygame.Surface((bg_rect.width, bg_rect.height))
-            bg_surface.set_alpha(150)
+            bg_surface.set_alpha(alpha)
             bg_surface.fill(self.colors['background'])
             self.display.blit(bg_surface, bg_rect)
             
@@ -2050,7 +2635,7 @@ class SkateboardApp:
             self.display.blit(text_surface, text_rect)
     
     def _draw_catch_feedback(self):
-        """Draw catch detection feedback on the display"""
+        """Draw catch detection feedback on the display with animations"""
         current_time = self._current_time
         
         # Show catch window indicator
@@ -2063,16 +2648,45 @@ class SkateboardApp:
                     if self.catch_key_pressed and not self.catch_key_released:
                         text = f"RELEASE TO CATCH! (Frame {self.animation_frame})"
                         color = self.colors['accent']  # Green when ready to release
+                        
+                        # Start pulsing animation for release prompt
+                        if 'catch_release_pulse' not in self.ui_animations:
+                            self._start_ui_animation('catch_release_pulse', 'pulse', 0.5, 
+                                                   {'scale': 1.0, 'glow': 0}, 
+                                                   {'scale': 1.2, 'glow': 25}, 
+                                                   'ease_in_out', loop=True)
                     else:
                         text = f"PRESS & RELEASE TO CATCH! (Perfect: {self.perfect_catch_frames})"
                         color = self.colors['warning']  # Yellow for catch window
+                        
+                        # Start subtle pulsing for catch window
+                        if 'catch_window_pulse' not in self.ui_animations:
+                            self._start_ui_animation('catch_window_pulse', 'pulse', 1.0, 
+                                                   {'scale': 1.0, 'glow': 0}, 
+                                                   {'scale': 1.05, 'glow': 10}, 
+                                                   'ease_in_out', loop=True)
+                    
+                    # Get animation values
+                    scale = 1.0
+                    glow = 0
+                    
+                    if 'catch_release_pulse' in self.ui_animations:
+                        scale = self._get_animated_value('catch_release_pulse', 'scale') or 1.0
+                        glow = int(self._get_animated_value('catch_release_pulse', 'glow') or 0)
+                    elif 'catch_window_pulse' in self.ui_animations:
+                        scale = self._get_animated_value('catch_window_pulse', 'scale') or 1.0
+                        glow = int(self._get_animated_value('catch_window_pulse', 'glow') or 0)
+                    
+                    # Apply scale to font size
+                    font_size = int(32 * scale)  # Base font size is 32
+                    scaled_font = pygame.font.Font(self.font_path, font_size) if self.font_path else pygame.font.Font(None, font_size)
                     
                     # Create text surface
-                    text_surface = self.title_font.render(text, True, color)
+                    text_surface = scaled_font.render(text, True, color)
                     text_rect = text_surface.get_rect(center=(self._display_center_x, 300))
                     
-                    # Draw background rectangle for better visibility
-                    bg_rect = text_rect.inflate(40, 20)
+                    # Draw background rectangle for better visibility with glow
+                    bg_rect = text_rect.inflate(40 + glow, 20 + glow)
                     bg_surface = pygame.Surface((bg_rect.width, bg_rect.height))
                     bg_surface.set_alpha(200)
                     bg_surface.fill(self.colors['background'])
@@ -2081,7 +2695,7 @@ class SkateboardApp:
                     # Draw the text
                     self.display.blit(text_surface, text_rect)
                     
-                    # Draw border
+                    # Draw border with glow
                     pygame.draw.rect(self.display, color, bg_rect, 3)
                     
                     # Draw progress bar for catch window
@@ -2093,10 +2707,19 @@ class SkateboardApp:
                     # Background bar
                     pygame.draw.rect(self.display, self.colors['progress_bg'], (bar_x, bar_y, bar_width, bar_height))
                     
-                    # Progress bar
+                    # Progress bar with smooth animation
                     progress = time_remaining / self.catch_window_duration
                     progress_width = int(bar_width * progress)
-                    pygame.draw.rect(self.display, color, (bar_x, bar_y, progress_width, bar_height))
+                    
+                    # Animate progress bar fill
+                    if 'catch_progress_fill' not in self.ui_animations:
+                        self._start_ui_animation('catch_progress_fill', 'fill', 0.1, 
+                                               {'width': 0}, 
+                                               {'width': progress_width}, 
+                                               'ease_out')
+                    
+                    animated_width = int(self._get_animated_value('catch_progress_fill', 'width') or progress_width)
+                    pygame.draw.rect(self.display, color, (bar_x, bar_y, animated_width, bar_height))
                     
                     # Border
                     pygame.draw.rect(self.display, self.colors['border'], (bar_x, bar_y, bar_width, bar_height), 2)
@@ -2111,13 +2734,43 @@ class SkateboardApp:
             if self.catch_success:
                 color = self.colors['accent']  # Green for success
                 text = "CAUGHT!"
+                
+                # Start success animation
+                if 'catch_success' not in self.ui_animations:
+                    self._start_ui_animation('catch_success', 'bounce', 0.6, 
+                                           {'scale': 0.5, 'offset_y': 0}, 
+                                           {'scale': 1.3, 'offset_y': -30}, 
+                                           'bounce')
             else:
                 color = self.colors['danger']  # Red for failure
                 text = "MISSED!"
+                
+                # Start failure animation
+                if 'catch_failure' not in self.ui_animations:
+                    self._start_ui_animation('catch_failure', 'shake', 0.4, 
+                                           {'scale': 1.0, 'offset_x': 0}, 
+                                           {'scale': 1.1, 'offset_x': 8}, 
+                                           'ease_in_out')
+            
+            # Get animation values
+            scale = 1.0
+            offset_x = 0
+            offset_y = 0
+            
+            if 'catch_success' in self.ui_animations:
+                scale = self._get_animated_value('catch_success', 'scale') or 1.0
+                offset_y = int(self._get_animated_value('catch_success', 'offset_y') or 0)
+            elif 'catch_failure' in self.ui_animations:
+                scale = self._get_animated_value('catch_failure', 'scale') or 1.0
+                offset_x = int(self._get_animated_value('catch_failure', 'offset_x') or 0)
+            
+            # Apply scale to font size
+            font_size = int(36 * scale)  # Base font size is 36
+            scaled_font = pygame.font.Font(self.font_path, font_size) if self.font_path else pygame.font.Font(None, font_size)
             
             # Create text surface
-            text_surface = self.title_font.render(text, True, color)
-            text_rect = text_surface.get_rect(center=(self._display_center_x, 300))
+            text_surface = scaled_font.render(text, True, color)
+            text_rect = text_surface.get_rect(center=(self._display_center_x + offset_x, 300 + offset_y))
             
             # Draw background rectangle for better visibility
             bg_rect = text_rect.inflate(40, 20)
@@ -2125,6 +2778,9 @@ class SkateboardApp:
             bg_surface.set_alpha(alpha)
             bg_surface.fill(self.colors['background'])
             self.display.blit(bg_surface, bg_rect)
+            
+            # Apply alpha to text
+            text_surface.set_alpha(alpha)
             
             # Draw the text
             self.display.blit(text_surface, text_rect)
@@ -2181,25 +2837,62 @@ class SkateboardApp:
             # Draw the overlay
             self.display.blit(red_overlay, (0, 0))
     
+    def _draw_scoring_display(self):
+        """Draw the scoring display"""
+        # Always show total points in top right
+        total_text = f"Score: {self.total_points}"
+        total_surface = self.font.render(total_text, True, self.colors['text'])
+        total_rect = total_surface.get_rect()
+        total_rect.topright = (self.display_width - 20, 20)
+        self.display.blit(total_surface, total_rect)
+        
+        # Show trick score feedback if recently scored
+        if self.show_score and self.score_display_timer > 0:
+            current_time = self._current_time
+            if current_time - self.score_display_timer < self.score_display_duration:
+                # Use stored values from the catch
+                points = self.last_trick_score
+                
+                # Determine timing text and color based on points
+                if points >= self.trick_points.get(self.current_trick_name, 100) * 2:
+                    timing_text = "PERFECT!"
+                    color = self.colors['accent']  # Green for perfect
+                elif points >= self.trick_points.get(self.current_trick_name, 100) * 1.5:
+                    timing_text = "GREAT!"
+                    color = self.colors['warning']  # Yellow for great
+                elif points >= self.trick_points.get(self.current_trick_name, 100) * 1.2:
+                    timing_text = "GOOD!"
+                    color = self.colors['secondary']  # Gray for good
+                else:
+                    timing_text = "MISSED!"
+                    color = self.colors['danger']  # Red for missed
+                
+                # Display only score (trick name is shown below board)
+                score_text = f"{timing_text} +{self.last_trick_score} points"
+                
+                score_surface = self.font.render(score_text, True, color)
+                score_rect = score_surface.get_rect()
+                
+                # Center score text
+                score_rect.center = (self.display_width // 2, 150)
+                
+                # Background rectangle
+                score_bg = score_rect.inflate(20, 10)
+                
+                pygame.draw.rect(self.display, color, score_bg, 3)
+                
+                self.display.blit(score_surface, score_rect)
+            else:
+                # Hide score display after duration
+                self.show_score = False
+    
+    # ==================== MAIN GAME LOOP ====================
+    
     def run(self):
         """Run the main application loop"""
         clock = pygame.time.Clock()
         running = True
-        
-        # Floor wheels sound removed - no constant background sound
-        
-        # Render initial frame with floor
         self.render_board(*self.angle)
-        
-        print("Skateboard Display App")
-        print("Controls:")
-        print("  Left Hand: W(up) A(left) S(down) D(right)")
-        print("  Right Hand: I(up) J(left) K(down) L(right)")
-        print("  ESC: Exit fullscreen")
-        print("  R: Reset angle")
-        print("  T: Toggle landing detection")
-        print("  C: Clear surface cache")
-        
         
         while running:
             # Update time once per frame
@@ -2228,18 +2921,23 @@ class SkateboardApp:
                     return False
                 elif event.key == pygame.K_r:
                     self.set_angle(*self.default_angle)
-                    print(f"Reset to default angle: {self.default_angle}")
                 elif event.key == pygame.K_t:
                     self.landing_detection_enabled = not self.landing_detection_enabled
                     status = "enabled" if self.landing_detection_enabled else "disabled"
-                    print(f"Landing detection {status}")
                 elif event.key == pygame.K_c:
                     self._clear_surface_cache()
                 elif event.key in self._key_mappings:
-                    self.keys_pressed[self._key_mappings[event.key]] = True
+                    key = self._key_mappings[event.key]
+                    self.keys_pressed[key] = True
+                    # Handle double-press detection
+                    self._handle_key_press(key)
             elif event.type == pygame.KEYUP:
                 if event.key in self._key_mappings:
-                    self.keys_pressed[self._key_mappings[event.key]] = False
+                    key = self._key_mappings[event.key]
+                    self.keys_pressed[key] = False
+                    # Reset double-press state when key is released
+                    if key in self.double_press_keys:
+                        self.double_press_detected[key] = False
         return running
     
     def _update_game_state(self):
@@ -2253,16 +2951,11 @@ class SkateboardApp:
         # Update trick detection
         self._update_trick_detection(self._current_time)
         
-        # Direct grind mode removed - only allow grinding through airborne grind window
-        
         # Update airborne state (spinning, landing)
         self._update_airborne_state()
         
-        # Debug grinding state
-        if self.grinding:
-            print(f"Grinding state active: {self.grind_trick}")
-        else:
-            print(f"Not grinding: airborne={self.airborne}, in_grind_window={self.in_grind_window}")
+        # Update UI animations
+        self._update_ui_animations()
         
         # Update rails
         self._update_rails()
@@ -2278,7 +2971,6 @@ def main():
         app = SkateboardApp()
         
         # Use the default angle set in __init__
-        # app.set_angle(0, 0, 0)  # This was overriding the default
         
         app.run()
     except Exception as e:

@@ -236,6 +236,114 @@ class ShuvFlipAnimationGenerator:
                 "150_300",  # Continue
                 "165_330",  # Continue
                 "180_0"     # Complete 180° shuv, back to start flip
+            ],
+            "Tre Flip": [
+                "0_0",      # Start
+                "15_345",   # Begin 360° flip + 360° shuv
+                "30_330",   # Quarter rotation
+                "45_315",   # Continue
+                "60_300",   # Continue
+                "75_285",   # Continue
+                "90_270",   # Quarter complete
+                "105_255",  # Continue
+                "120_240",  # Continue
+                "135_225",  # Continue
+                "150_210",  # Continue
+                "165_195",  # Continue
+                "180_180",  # Half complete
+                "195_165",  # Continue
+                "210_150",  # Continue
+                "225_135",  # Continue
+                "240_120",  # Continue
+                "255_105",  # Continue
+                "270_90",   # Three quarter complete
+                "285_75",   # Continue
+                "300_60",   # Continue
+                "315_45",   # Continue
+                "330_30",   # Continue
+                "345_15",   # Almost complete
+                "0_0"       # Complete 360° rotation (back to start)
+            ],
+            "Lazer Flip": [
+                "0_0",      # Start
+                "345_15",   # Begin 360° frontside shuv + heelflip
+                "330_30",   # Quarter rotation
+                "315_45",   # Continue
+                "300_60",   # Continue
+                "285_75",   # Continue
+                "270_90",   # Quarter complete
+                "255_105",  # Continue
+                "240_120",  # Continue
+                "225_135",  # Continue
+                "210_150",  # Continue
+                "195_165",  # Continue
+                "180_180",  # Half complete
+                "165_195",  # Continue
+                "150_210",  # Continue
+                "135_225",  # Continue
+                "120_240",  # Continue
+                "105_255",  # Continue
+                "90_270",   # Three quarter complete
+                "75_285",   # Continue
+                "60_300",   # Continue
+                "45_315",   # Continue
+                "30_330",   # Continue
+                "15_345",   # Almost complete
+                "0_0"       # Complete 360° rotation (back to start)
+            ],
+            "360 Hardflip": [
+                "0_0",      # Start
+                "345_345",  # Begin 360° frontside shuv + kickflip
+                "330_330",  # Quarter rotation
+                "315_315",  # Continue
+                "300_300",  # Continue
+                "285_285",  # Continue
+                "270_270",  # Quarter complete
+                "255_255",  # Continue
+                "240_240",  # Continue
+                "225_225",  # Continue
+                "210_210",  # Continue
+                "195_195",  # Continue
+                "180_180",  # Half complete
+                "165_165",  # Continue
+                "150_150",  # Continue
+                "135_135",  # Continue
+                "120_120",  # Continue
+                "105_105",  # Continue
+                "90_90",    # Three quarter complete
+                "75_75",    # Continue
+                "60_60",    # Continue
+                "45_45",    # Continue
+                "30_30",    # Continue
+                "15_15",    # Almost complete
+                "0_0"       # Complete 360° rotation (back to start)
+            ],
+            "360 Inward Heel": [
+                "0_0",      # Start
+                "15_15",    # Begin 360° backside shuv + heelflip
+                "30_30",    # Quarter rotation
+                "45_45",    # Continue
+                "60_60",    # Continue
+                "75_75",    # Continue
+                "90_90",    # Quarter complete
+                "105_105",  # Continue
+                "120_120",  # Continue
+                "135_135",  # Continue
+                "150_150",  # Continue
+                "165_165",  # Continue
+                "180_180",  # Half complete
+                "195_195",  # Continue
+                "210_210",  # Continue
+                "225_225",  # Continue
+                "240_240",  # Continue
+                "255_255",  # Continue
+                "270_270",  # Three quarter complete
+                "285_285",  # Continue
+                "300_300",  # Continue
+                "315_315",  # Continue
+                "330_330",  # Continue
+                "345_345",  # Almost complete
+                "0_0"       # Complete 360° rotation (back to start)
             ]
         }
     

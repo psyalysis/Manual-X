@@ -1,36 +1,35 @@
 Nollie Heelflip Animation Metadata
 ========================================
 
-Frames: 26
+Frames: 25
 Frames per row: 8
 Rows: 4
-Sprite size: 64x64
+Sprite size: 128x128
 
-Frame sequence:
+Frame sequence (shuv_flip):
 --------------------
-Frame  0: 0.0_90.0_0.0
-Frame  1: -15.0_90.0_0.0
-Frame  2: -15.0_75.0_0.0
-Frame  3: -15.0_60.0_0.0
-Frame  4: -15.0_45.0_0.0
-Frame  5: -15.0_30.0_0.0
-Frame  6: -15.0_15.0_0.0
-Frame  7: -15.0_0.0_0.0
-Frame  8: -15.0_345.0_0.0
-Frame  9: -15.0_330.0_0.0
-Frame 10: -15.0_315.0_0.0
-Frame 11: -15.0_300.0_0.0
-Frame 12: -15.0_285.0_0.0
-Frame 13: -15.0_270.0_0.0
-Frame 14: -15.0_255.0_0.0
-Frame 15: -15.0_240.0_0.0
-Frame 16: -15.0_225.0_0.0
-Frame 17: -15.0_210.0_0.0
-Frame 18: -15.0_195.0_0.0
-Frame 19: -15.0_180.0_0.0
-Frame 20: -15.0_165.0_0.0
-Frame 21: -15.0_150.0_0.0
-Frame 22: -15.0_135.0_0.0
-Frame 23: -15.0_120.0_0.0
-Frame 24: -15.0_105.0_0.0
-Frame 25: 0.0_90.0_0.0
+Frame  0: 0_0
+Frame  1: 0_15
+Frame  2: 0_30
+Frame  3: 0_45
+Frame  4: 0_60
+Frame  5: 0_75
+Frame  6: 0_90
+Frame  7: 0_105
+Frame  8: 0_120
+Frame  9: 0_135
+Frame 10: 0_150
+Frame 11: 0_165
+Frame 12: 0_180
+Frame 13: 0_195
+Frame 14: 0_210
+Frame 15: 0_225
+Frame 16: 0_240
+Frame 17: 0_255
+Frame 18: 0_270
+Frame 19: 0_285
+Frame 20: 0_300
+Frame 21: 0_315
+Frame 22: 0_330
+Frame 23: 0_345
+Frame 24: 0_0
